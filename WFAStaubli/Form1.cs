@@ -99,5 +99,89 @@ namespace WFAStaubli
         }
 
         #endregion
+
+        #region Çizgi ve Eğri Tanımı
+
+        private void IdentifyLinesAndCurves(List<Point> path)
+        {
+            var groupedPoints = GroupAdjacentPoints(path);
+            List<List<Point>> lines = new List<List<Point>>();
+            List<List<Point>> curves = new List<List<Point>>();
+
+            foreach (var group in groupedPoints)
+            {
+                if (IsLine(group))
+                {
+                    lines.Add(group);
+                }
+                else
+                {
+                    curves.Add(group);
+                }
+            }
+
+            // At this point, 'lines' contains groups of points forming lines, and 'curves' contains the rest.
+            // You can further process these to generate drawing commands or visualize them.
+        }
+
+        private List<List<Point>> GroupAdjacentPoints(List<Point> path)
+        {
+            List<List<Point>> groups = new List<List<Point>>();
+            List<Point> currentGroup = new List<Point>();
+
+            foreach (Point point in path)
+            {
+                if (currentGroup.Count == 0)
+                {
+                    currentGroup.Add(point);
+                }
+                else
+                {
+                    Point lastPoint = currentGroup[currentGroup.Count - 1];
+                    // Check if the current point is adjacent to the last point in the current group
+                    if (Math.Abs(point.X - lastPoint.X) <= 1 && Math.Abs(point.Y - lastPoint.Y) <= 1)
+                    {
+                        currentGroup.Add(point);
+                    }
+                    else
+                    {
+                        groups.Add(new List<Point>(currentGroup));
+                        currentGroup.Clear();
+                        currentGroup.Add(point);
+                    }
+                }
+            }
+
+            if (currentGroup.Count > 0)
+            {
+                groups.Add(currentGroup);
+            }
+
+            return groups;
+        }
+
+        private bool IsLine(List<Point> points)
+        {
+            if (points.Count < 2)
+            {
+                return false;
+            }
+
+            const double slopeTolerance = 0.1; // Adjust tolerance as needed
+            double expectedSlope = (double)(points[1].Y - points[0].Y) / (points[1].X - points[0].X);
+
+            for (int i = 1; i < points.Count - 1; i++)
+            {
+                double slope = (double)(points[i + 1].Y - points[i].Y) / (points[i + 1].X - points[i].X);
+                if (Math.Abs(slope - expectedSlope) > slopeTolerance)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        #endregion
     }
 }
