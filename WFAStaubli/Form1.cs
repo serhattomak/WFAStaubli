@@ -3,10 +3,15 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using Emgu.CV;
+using Emgu.CV.CvEnum;
+using Emgu.CV.Structure;
+using Emgu.CV.Util;
 
 namespace WFAStaubli
 {
@@ -37,15 +42,79 @@ namespace WFAStaubli
             if (pcbOriginal.Image != null)
             {
                 Bitmap originalImage = new Bitmap(pcbOriginal.Image);
+                if (originalImage.Width == 0 || originalImage.Height == 0)
+                {
+                    MessageBox.Show("Loaded image is empty.");
+                    return;
+                }
+
                 Bitmap convertedImage = ConvertToBlackAndWhite(originalImage);
                 pcbConverted.Image = convertedImage;
-
-                List<Point> path = CreatePathFromImage(convertedImage);
             }
         }
         private void btnCommand_Click(object sender, EventArgs e)
         {
+            if (pcbConverted.Image != null)
+            {
+                // Convert PictureBox Image to Bitmap
+                Bitmap convertedImage = new Bitmap(pcbConverted.Image);
 
+                if (convertedImage.Width == 0 || convertedImage.Height == 0)
+                {
+                    MessageBox.Show("Converted image is empty.");
+                    return;
+                }
+
+                // Detect lines and curves from the converted image
+                var lines = DetectLines(convertedImage);
+                var curves = DetectCurves(convertedImage);
+
+                // Generate movement commands based on detected lines and curves
+                List<string> commands = new List<string>();
+
+                // Add line movement commands
+                foreach (var line in lines)
+                {
+                    // MoveJ to the start of the line
+                    commands.Add($"moveJ({line.P1.X}, {line.P1.Y})");
+                    // MoveL to the end of the line
+                    commands.Add($"moveL({line.P2.X}, {line.P2.Y})");
+                }
+
+                // Add curve movement commands - replace this with your actual curve handling logic
+                foreach (var curve in curves)
+                {
+                    // Placeholder for curve handling
+                    // For now, just move to the start of the curve
+                    Point startPoint = curve[0];
+                    commands.Add($"moveJ({startPoint.X}, {startPoint.Y})");
+
+                    // Move along the curve (this should be replaced with your curve fitting and movement logic)
+                    for (int i = 1; i < curve.Size; i++)
+                    {
+                        Point point = curve[i];
+                        commands.Add($"moveL({point.X}, {point.Y})");
+                    }
+                }
+
+                // Prompt the user to save the commands to a file
+                SaveFileDialog saveFileDialog = new SaveFileDialog
+                {
+                    Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
+                    Title = "Save Robot Commands"
+                };
+
+                if (saveFileDialog.ShowDialog() == DialogResult.OK)
+                {
+                    using (StreamWriter sw = new StreamWriter(saveFileDialog.FileName))
+                    {
+                        foreach (string command in commands)
+                        {
+                            sw.WriteLine(command);
+                        }
+                    }
+                }
+            }
         }
         #endregion
 
@@ -182,6 +251,121 @@ namespace WFAStaubli
             return true;
         }
 
+        #endregion
+
+        #region Çizgi ve Eğri Tanımı (EmguCV)
+        // Çizgi Tespiti
+        private List<LineSegment2D> DetectLines(Bitmap image)
+        {
+            List<LineSegment2D> lines = new List<LineSegment2D>();
+
+            if (image == null || image.Width == 0 || image.Height == 0)
+            {
+                throw new InvalidOperationException("Image is not loaded correctly for line detection.");
+            }
+
+            // Convert the Bitmap to a Mat
+            using (Mat imageMat = image.ToMat())
+            {
+                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
+                using (UMat cannyEdges = new UMat())
+                {
+                    CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
+                    LineSegment2D[] detectedLines = CvInvoke.HoughLinesP(
+                        cannyEdges,
+                        1, // Distance resolution in pixels
+                        Math.PI / 45.0, // Angle resolution in radians
+                        20, // Threshold
+                        30, // Minimum width of a line
+                        10); // Gap between lines
+
+                    lines.AddRange(detectedLines);
+                }
+            }
+
+            return lines;
+        }
+
+
+
+
+        // Eğri Tespiti
+        private List<VectorOfPoint> DetectCurves(Bitmap image)
+        {
+            List<VectorOfPoint> curves = new List<VectorOfPoint>();
+
+            if (image == null || image.Width == 0 || image.Height == 0)
+            {
+                throw new InvalidOperationException("Image is not loaded correctly for curve detection.");
+            }
+
+            // Convert the Bitmap to a Mat
+            using (Mat imageMat = image.ToMat())
+            {
+                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
+
+                // Use Canny edge detection
+                using (Mat cannyEdges = new Mat())
+                {
+                    CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
+
+                    // Find contours
+                    using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
+                    {
+                        CvInvoke.FindContours(cannyEdges, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
+                        for (int i = 0; i < contours.Size; i++)
+                        {
+                            using (VectorOfPoint contour = contours[i])
+                            {
+                                VectorOfPoint approxContour = new VectorOfPoint();
+                                CvInvoke.ApproxPolyDP(contour, approxContour, CvInvoke.ArcLength(contour, true) * 0.015, true);
+                                if (CvInvoke.ContourArea(approxContour, false) > 10) // Filter small contours
+                                {
+                                    curves.Add(approxContour);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            return curves;
+        }
+
+        #endregion
+
+        #region Robot Komutlarını Oluşturma
+        private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
+        {
+            List<string> commands = new List<string>();
+
+            // Process lines
+            foreach (var line in lines)
+            {
+                // MoveJ to the start of the line
+                commands.Add($"moveJ({line.P1.X}, {line.P1.Y})");
+                // MoveL to the end of the line
+                commands.Add($"moveL({line.P2.X}, {line.P2.Y})");
+            }
+
+            // Process curves
+            // For simplicity, assuming a curve is a series of MoveL commands
+            foreach (var curve in curves)
+            {
+                // MoveJ to the start of the curve
+                Point startPoint = curve[0];
+                commands.Add($"moveJ({startPoint.X}, {startPoint.Y})");
+
+                // MoveL through the curve
+                for (int i = 1; i < curve.Size; i++)
+                {
+                    Point point = curve[i];
+                    commands.Add($"moveL({point.X}, {point.Y})");
+                }
+            }
+
+            return commands;
+        }
         #endregion
     }
 }
