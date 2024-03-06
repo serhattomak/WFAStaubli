@@ -39,6 +39,8 @@ namespace WFAStaubli
                 Bitmap originalImage = new Bitmap(pcbOriginal.Image);
                 Bitmap convertedImage = ConvertToBlackAndWhite(originalImage);
                 pcbConverted.Image = convertedImage;
+
+                List<Point> path = CreatePathFromImage(convertedImage);
             }
         }
         private void btnCommand_Click(object sender, EventArgs e)
@@ -63,6 +65,34 @@ namespace WFAStaubli
                 }
             }
             return originalImage;
+        }
+
+        #endregion
+
+        #region Yol Oluşturma
+
+        // Görsel Üzerinden Yol Oluşturma Metodu
+
+        private List<Point> CreatePathFromImage(Bitmap image)
+        {
+            List<Point> path = new List<Point>();
+
+            // Scan the image row by row
+            for (int y = 0; y < image.Height; y++)
+            {
+                for (int x = 0; x < image.Width; x++)
+                {
+                    Color pixelColor = image.GetPixel(x, y);
+                    // Assuming black pixels represent the path
+                    // Note: This could be adjusted depending on how the image is processed
+                    if (pixelColor.R == 0 && pixelColor.G == 0 && pixelColor.B == 0)
+                    {
+                        path.Add(new Point(x, y));
+                    }
+                }
+            }
+
+            return path;
         }
 
         #endregion
