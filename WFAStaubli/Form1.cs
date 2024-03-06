@@ -29,7 +29,7 @@ namespace WFAStaubli
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
                 // Load and display the image in the PictureBox
-                imageBox.Image = new Bitmap(openFileDialog.FileName);
+                pcbOriginal.Image = new Bitmap(openFileDialog.FileName);
             }
         }
         private void btnConvert_Click(object sender, EventArgs e)
@@ -54,17 +54,21 @@ namespace WFAStaubli
         // Siyah - Beyaz Dönüşüm Metodu
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
+            Bitmap blackAndWhiteImage = new Bitmap(originalImage.Width, originalImage.Height);
+
             for (int i = 0; i < originalImage.Width; i++)
             {
                 for (int j = 0; j < originalImage.Height; j++)
                 {
                     Color originalColor = originalImage.GetPixel(i, j);
+                    // Calculate the grayscale value
                     int grayScale = (int)((originalColor.R * 0.3) + (originalColor.G * 0.59) + (originalColor.B * 0.11));
-                    Color newColor = Color.FromArgb(grayScale, grayScale, grayScale);
-                    originalImage.SetPixel(i, j, newColor);
+                    // Apply the threshold
+                    Color newColor = grayScale < 128 ? Color.FromArgb(255, 0, 0, 0) : Color.FromArgb(255, 255, 255, 255);
+                    blackAndWhiteImage.SetPixel(i, j, newColor);
                 }
             }
-            return originalImage;
+            return blackAndWhiteImage;
         }
 
         #endregion
@@ -83,7 +87,6 @@ namespace WFAStaubli
                 for (int x = 0; x < image.Width; x++)
                 {
                     Color pixelColor = image.GetPixel(x, y);
-                    // Assuming black pixels represent the path
                     // Note: This could be adjusted depending on how the image is processed
                     if (pixelColor.R == 0 && pixelColor.G == 0 && pixelColor.B == 0)
                     {
