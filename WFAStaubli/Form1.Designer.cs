@@ -35,6 +35,7 @@
             this.btnUpload = new System.Windows.Forms.Button();
             this.btnConvert = new System.Windows.Forms.Button();
             this.btnCommand = new System.Windows.Forms.Button();
+            this.debugLabel = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.pcbOriginal)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.pcbConverted)).BeginInit();
             this.SuspendLayout();
@@ -110,11 +111,21 @@
             this.btnCommand.UseVisualStyleBackColor = true;
             this.btnCommand.Click += new System.EventHandler(this.btnCommand_Click);
             // 
+            // debugLabel
+            // 
+            this.debugLabel.AutoSize = true;
+            this.debugLabel.Location = new System.Drawing.Point(97, 640);
+            this.debugLabel.Name = "debugLabel";
+            this.debugLabel.Size = new System.Drawing.Size(35, 13);
+            this.debugLabel.TabIndex = 7;
+            this.debugLabel.Text = "label1";
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
             this.ClientSize = new System.Drawing.Size(1264, 681);
+            this.Controls.Add(this.debugLabel);
             this.Controls.Add(this.btnCommand);
             this.Controls.Add(this.btnConvert);
             this.Controls.Add(this.btnUpload);
@@ -127,6 +138,7 @@
             ((System.ComponentModel.ISupportInitialize)(this.pcbOriginal)).EndInit();
             ((System.ComponentModel.ISupportInitialize)(this.pcbConverted)).EndInit();
             this.ResumeLayout(false);
+            this.PerformLayout();
 
         }
 
@@ -139,6 +151,7 @@
         private System.Windows.Forms.Button btnUpload;
         private System.Windows.Forms.Button btnConvert;
         private System.Windows.Forms.Button btnCommand;
+        private System.Windows.Forms.Label debugLabel;
     }
 }
 

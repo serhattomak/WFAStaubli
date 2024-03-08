@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -51,7 +52,7 @@ namespace WFAStaubli
 
                 Bitmap convertedImage = ConvertToBlackAndWhite(originalImage);
                 pcbConverted.Image = convertedImage;
-                pcbConverted.SizeMode=PictureBoxSizeMode.StretchImage;
+                pcbConverted.SizeMode = PictureBoxSizeMode.StretchImage;
             }
         }
         private void btnCommand_Click(object sender, EventArgs e)
@@ -66,21 +67,22 @@ namespace WFAStaubli
                     return;
                 }
 
-                // Initial detection of lines and curves
+                // Step 1: Initial detection of lines and curves
                 var initialLines = DetectLines(convertedImage);
                 var initialCurves = DetectCurves(convertedImage);
 
-                // Create a path from the image for further refinement
+                // Step 2: Create a path from the image for further refinement
                 List<Point> pathPoints = CreatePathFromImage(convertedImage);
 
                 // Use the path points to identify refined lines and curves
                 var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(pathPoints);
 
-                // You might want to merge initial and refined detections or choose one over the other
-                // For now, let's proceed with the refined detections
+                // Optional: Combine initial and refined detections or choose one over the other
+                // For demonstration, let's proceed with the refined detections
+                // You can modify this logic based on your application's needs
                 List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves);
 
-                // Prompt the user to save the commands to a file
+                // Step 3: Prompt the user to save the commands to a file
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
                     Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
@@ -99,6 +101,7 @@ namespace WFAStaubli
                 }
             }
         }
+
 
 
 
@@ -191,25 +194,34 @@ namespace WFAStaubli
             {
                 if (IsLine(group))
                 {
-                    // Assuming the line can be represented by its start and end points
                     lines.Add(new LineSegment2D(group.First(), group.Last()));
                 }
                 else
                 {
-                    // For curves, create a VectorOfPoint from the group
-                    VectorOfPoint curve = new VectorOfPoint(group.ToArray());
-                    curves.Add(curve);
+                    // Treat every non-line group as a curve for now
+                    curves.Add(new VectorOfPoint(group.ToArray()));
                 }
             }
 
+            UpdateDebugInfo($"Lines: {lines.Count}, Curves: {curves.Count}");
+
             return (lines, curves);
         }
+
+
+        private double GetDistance(Point p1, Point p2)
+        {
+            return Math.Sqrt(Math.Pow(p2.X - p1.X, 2) + Math.Pow(p2.Y - p1.Y, 2));
+        }
+
 
 
         private List<List<Point>> GroupAdjacentPoints(List<Point> path)
         {
             List<List<Point>> groups = new List<List<Point>>();
             List<Point> currentGroup = new List<Point>();
+            // Define the proximity threshold - how close points should be to each other to be considered in the same group
+            int proximityThreshold = 10;  // You may adjust this value based on your image's resolution and scale
 
             foreach (Point point in path)
             {
@@ -219,16 +231,19 @@ namespace WFAStaubli
                 }
                 else
                 {
-                    Point lastPoint = currentGroup[currentGroup.Count - 1];
-                    // Check if the current point is adjacent to the last point in the current group
-                    if (Math.Abs(point.X - lastPoint.X) <= 1 && Math.Abs(point.Y - lastPoint.Y) <= 1)
+                    Point lastPoint = currentGroup.Last();
+                    // Adjust this distance as needed
+                    if (Math.Abs(point.X - lastPoint.X) <= proximityThreshold && Math.Abs(point.Y - lastPoint.Y) <= proximityThreshold)
                     {
                         currentGroup.Add(point);
                     }
                     else
                     {
-                        groups.Add(new List<Point>(currentGroup));
-                        currentGroup.Clear();
+                        if (currentGroup.Count > 0)
+                        {
+                            groups.Add(new List<Point>(currentGroup));
+                            currentGroup.Clear();
+                        }
                         currentGroup.Add(point);
                     }
                 }
@@ -239,23 +254,56 @@ namespace WFAStaubli
                 groups.Add(currentGroup);
             }
 
+            // Debugging: Output the group sizes to understand the grouping
+            foreach (var group in groups)
+            {
+                Debug.WriteLine($"Group size: {group.Count}");
+            }
+
             return groups;
         }
 
+
+        //private bool IsLine(List<Point> points)
+        //{
+        //    // Consider adjusting the slope tolerance or using a different line detection logic
+        //    const double slopeTolerance = 0.2; // Adjusted tolerance
+
+        //    if (points.Count < 2)
+        //    {
+        //        return false;
+        //    }
+
+        //    // You could also consider using a more sophisticated line fitting approach here
+        //    Point startPoint = points.First();
+        //    Point endPoint = points.Last();
+        //    double expectedSlope = Math.Abs(endPoint.Y - startPoint.Y) / (double)(endPoint.X - startPoint.X + 0.0001);
+
+        //    foreach (Point point in points)
+        //    {
+        //        double actualSlope = Math.Abs(point.Y - startPoint.Y) / (double)(point.X - startPoint.X + 0.0001);
+        //        if (Math.Abs(actualSlope - expectedSlope) > slopeTolerance)
+        //        {
+        //            return false;
+        //        }
+        //    }
+
+        //    return true;
+        //}
         private bool IsLine(List<Point> points)
         {
             if (points.Count < 2)
-            {
                 return false;
-            }
 
-            const double slopeTolerance = 0.1; // Adjust tolerance as needed
-            double expectedSlope = (double)(points[1].Y - points[0].Y) / (points[1].X - points[0].X);
+            Point startPoint = points.First();
+            Point endPoint = points.Last();
+
+            // Define a tolerance for how far points can be from the line
+            double tolerance = 5.0; // This can be adjusted based on your needs
 
             for (int i = 1; i < points.Count - 1; i++)
             {
-                double slope = (double)(points[i + 1].Y - points[i].Y) / (points[i + 1].X - points[i].X);
-                if (Math.Abs(slope - expectedSlope) > slopeTolerance)
+                if (DistanceFromPointToLine(points[i], startPoint, endPoint) > tolerance)
                 {
                     return false;
                 }
@@ -263,6 +311,33 @@ namespace WFAStaubli
 
             return true;
         }
+
+
+        private double CalculateAngle(Point a, Point b, Point c)
+        {
+            var ab = Math.Sqrt(Math.Pow(b.X - a.X, 2) + Math.Pow(b.Y - a.Y, 2));
+            var bc = Math.Sqrt(Math.Pow(b.X - c.X, 2) + Math.Pow(b.Y - c.Y, 2));
+            var ac = Math.Sqrt(Math.Pow(c.X - a.X, 2) + Math.Pow(c.Y - a.Y, 2));
+            return Math.Acos((bc * bc + ab * ab - ac * ac) / (2 * bc * ab)) * (180 / Math.PI);
+        }
+
+
+        private double DistanceFromPointToLine(Point p, Point a, Point b)
+        {
+            double normalLength = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
+            return Math.Abs((p.X - a.X) * (b.Y - a.Y) - (p.Y - a.Y) * (b.X - a.X)) / normalLength;
+        }
+
+
+        private bool IsPointOnLine(Point a, Point b, Point point)
+        {
+            // Basic collinearity check (within a tolerance to account for integer rounding)
+            int dx = b.X - a.X;
+            int dy = b.Y - a.Y;
+            int crossProduct = (point.Y - a.Y) * dx - (point.X - a.X) * dy;
+            return Math.Abs(crossProduct) < 1000;  // Adjust tolerance as needed
+        }
+
 
         #endregion
 
@@ -306,7 +381,7 @@ namespace WFAStaubli
 
             return lines;
         }
-        
+
         // Eğri Tespiti
         private List<VectorOfPoint> DetectCurves(Bitmap image)
         {
@@ -385,5 +460,18 @@ namespace WFAStaubli
             return commands;
         }
         #endregion
+
+        private void UpdateDebugInfo(string text)
+        {
+            // Assuming you have a label named debugLabel for debugging output
+            if (this.InvokeRequired)
+            {
+                this.Invoke(new Action(() => debugLabel.Text = text));
+            }
+            else
+            {
+                debugLabel.Text = text;
+            }
+        }
     }
 }
