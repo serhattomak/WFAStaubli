@@ -35,6 +35,7 @@ namespace WFAStaubli
             {
                 // Load and display the image in the PictureBox
                 pcbOriginal.Image = new Bitmap(openFileDialog.FileName);
+                pcbOriginal.SizeMode = PictureBoxSizeMode.StretchImage;
             }
         }
         private void btnConvert_Click(object sender, EventArgs e)
@@ -50,6 +51,7 @@ namespace WFAStaubli
 
                 Bitmap convertedImage = ConvertToBlackAndWhite(originalImage);
                 pcbConverted.Image = convertedImage;
+                pcbConverted.SizeMode=PictureBoxSizeMode.StretchImage;
             }
         }
         private void btnCommand_Click(object sender, EventArgs e)
@@ -64,13 +66,21 @@ namespace WFAStaubli
                     return;
                 }
 
+                // Initial detection of lines and curves
+                var initialLines = DetectLines(convertedImage);
+                var initialCurves = DetectCurves(convertedImage);
+
+                // Create a path from the image for further refinement
                 List<Point> pathPoints = CreatePathFromImage(convertedImage);
 
-                // Deconstruct the tuple returned by IdentifyLinesAndCurves
-                var (lines, curves) = IdentifyLinesAndCurves(pathPoints);
+                // Use the path points to identify refined lines and curves
+                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(pathPoints);
 
-                List<string> commands = GenerateRobotCommands(lines, curves);
+                // You might want to merge initial and refined detections or choose one over the other
+                // For now, let's proceed with the refined detections
+                List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves);
 
+                // Prompt the user to save the commands to a file
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
                     Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
@@ -89,6 +99,7 @@ namespace WFAStaubli
                 }
             }
         }
+
 
 
 
@@ -281,16 +292,21 @@ namespace WFAStaubli
                         30, // Minimum width of a line
                         10); // Gap between lines
 
-                    lines.AddRange(detectedLines);
+                    // Filter out short lines
+                    const double minLineLength = 20.0; // Define a minimum line length threshold
+                    foreach (var line in detectedLines)
+                    {
+                        if (line.Length >= minLineLength)
+                        {
+                            lines.Add(line);
+                        }
+                    }
                 }
             }
 
             return lines;
         }
-
-
-
-
+        
         // Eğri Tespiti
         private List<VectorOfPoint> DetectCurves(Bitmap image)
         {
