@@ -149,23 +149,46 @@ namespace WFAStaubli
         private List<Point> CreatePathFromImage(Bitmap image)
         {
             List<Point> path = new List<Point>();
+            const int proximityThreshold = 5; // Points within this distance will be considered in the same cluster
+            bool[,] visited = new bool[image.Width, image.Height];
 
-            // Scan the image row by row
             for (int y = 0; y < image.Height; y++)
             {
                 for (int x = 0; x < image.Width; x++)
                 {
+                    if (visited[x, y])
+                        continue;
+
                     Color pixelColor = image.GetPixel(x, y);
-                    // Note: This could be adjusted depending on how the image is processed
                     if (pixelColor.R == 0 && pixelColor.G == 0 && pixelColor.B == 0)
                     {
-                        path.Add(new Point(x, y));
+                        // Found a black pixel
+                        bool isIsolated = true;
+                        for (int nx = Math.Max(0, x - proximityThreshold); nx < Math.Min(image.Width, x + proximityThreshold); nx++)
+                        {
+                            for (int ny = Math.Max(0, y - proximityThreshold); ny < Math.Min(image.Height, y + proximityThreshold); ny++)
+                            {
+                                if (nx == x && ny == y) continue; // skip the current pixel
+
+                                if (image.GetPixel(nx, ny).R == 0 && image.GetPixel(nx, ny).G == 0 && image.GetPixel(nx, ny).B == 0)
+                                {
+                                    visited[nx, ny] = true; // Mark nearby black pixels as visited
+                                    isIsolated = false;
+                                }
+                            }
+                        }
+
+                        if (!isIsolated)
+                        {
+                            path.Add(new Point(x, y));
+                        }
                     }
                 }
             }
 
             return path;
         }
+
 
         #endregion
 
