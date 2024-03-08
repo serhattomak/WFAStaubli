@@ -56,7 +56,6 @@ namespace WFAStaubli
         {
             if (pcbConverted.Image != null)
             {
-                // Convert PictureBox Image to Bitmap
                 Bitmap convertedImage = new Bitmap(pcbConverted.Image);
 
                 if (convertedImage.Width == 0 || convertedImage.Height == 0)
@@ -65,39 +64,13 @@ namespace WFAStaubli
                     return;
                 }
 
-                // Detect lines and curves from the converted image
-                var lines = DetectLines(convertedImage);
-                var curves = DetectCurves(convertedImage);
+                List<Point> pathPoints = CreatePathFromImage(convertedImage);
 
-                // Generate movement commands based on detected lines and curves
-                List<string> commands = new List<string>();
+                // Deconstruct the tuple returned by IdentifyLinesAndCurves
+                var (lines, curves) = IdentifyLinesAndCurves(pathPoints);
 
-                // Add line movement commands
-                foreach (var line in lines)
-                {
-                    // MoveJ to the start of the line
-                    commands.Add($"moveJ({line.P1.X}, {line.P1.Y})");
-                    // MoveL to the end of the line
-                    commands.Add($"moveL({line.P2.X}, {line.P2.Y})");
-                }
+                List<string> commands = GenerateRobotCommands(lines, curves);
 
-                // Add curve movement commands - replace this with your actual curve handling logic
-                foreach (var curve in curves)
-                {
-                    // Placeholder for curve handling
-                    // For now, just move to the start of the curve
-                    Point startPoint = curve[0];
-                    commands.Add($"moveJ({startPoint.X}, {startPoint.Y})");
-
-                    // Move along the curve (this should be replaced with your curve fitting and movement logic)
-                    for (int i = 1; i < curve.Size; i++)
-                    {
-                        Point point = curve[i];
-                        commands.Add($"moveL({point.X}, {point.Y})");
-                    }
-                }
-
-                // Prompt the user to save the commands to a file
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
                     Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
@@ -116,6 +89,9 @@ namespace WFAStaubli
                 }
             }
         }
+
+
+
         #endregion
 
         #region Siyah - Beyaz Dönüşüm
@@ -194,27 +170,30 @@ namespace WFAStaubli
 
         #region Çizgi ve Eğri Tanımı
 
-        private void IdentifyLinesAndCurves(List<Point> path)
+        private (List<LineSegment2D>, List<VectorOfPoint>) IdentifyLinesAndCurves(List<Point> path)
         {
+            List<LineSegment2D> lines = new List<LineSegment2D>();
+            List<VectorOfPoint> curves = new List<VectorOfPoint>();
             var groupedPoints = GroupAdjacentPoints(path);
-            List<List<Point>> lines = new List<List<Point>>();
-            List<List<Point>> curves = new List<List<Point>>();
 
             foreach (var group in groupedPoints)
             {
                 if (IsLine(group))
                 {
-                    lines.Add(group);
+                    // Assuming the line can be represented by its start and end points
+                    lines.Add(new LineSegment2D(group.First(), group.Last()));
                 }
                 else
                 {
-                    curves.Add(group);
+                    // For curves, create a VectorOfPoint from the group
+                    VectorOfPoint curve = new VectorOfPoint(group.ToArray());
+                    curves.Add(curve);
                 }
             }
 
-            // At this point, 'lines' contains groups of points forming lines, and 'curves' contains the rest.
-            // You can further process these to generate drawing commands or visualize them.
+            return (lines, curves);
         }
+
 
         private List<List<Point>> GroupAdjacentPoints(List<Point> path)
         {
