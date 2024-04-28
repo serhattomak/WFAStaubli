@@ -57,32 +57,29 @@ namespace WFAStaubli
         }
         private void btnCommand_Click(object sender, EventArgs e)
         {
+            ResetFirstPoint();
             if (pcbConverted.Image != null)
             {
-                Bitmap convertedImage = new Bitmap(pcbConverted.Image);
+                Bitmap convertedImage = pcbConverted.Image as Bitmap; // Safe cast
 
-                if (convertedImage.Width == 0 || convertedImage.Height == 0)
+                if (convertedImage == null || convertedImage.Width == 0 || convertedImage.Height == 0)
                 {
-                    MessageBox.Show("Converted image is empty.");
+                    MessageBox.Show("Converted image is empty or not a Bitmap.");
                     return;
                 }
 
-                // Step 1: Initial detection of lines and curves
+                double[] rotation = DetectOrientation(convertedImage); // Now correctly passing a Bitmap
+
                 var initialLines = DetectLines(convertedImage);
                 var initialCurves = DetectCurves(convertedImage);
 
-                // Step 2: Create a path from the image for further refinement
                 List<Point> pathPoints = CreatePathFromImage(convertedImage);
+                List<Point> sortedPoints = SortPathPoints(pathPoints); // Sort points for logical movement
 
-                // Use the path points to identify refined lines and curves
-                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(pathPoints);
+                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(sortedPoints); // Use sorted points here
 
-                // Optional: Combine initial and refined detections or choose one over the other
-                // For demonstration, let's proceed with the refined detections
-                // You can modify this logic based on your application's needs
-                List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves);
+                List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation); // Assuming rotation is used here
 
-                // Step 3: Prompt the user to save the commands to a file
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
                     Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
@@ -93,18 +90,22 @@ namespace WFAStaubli
                 {
                     using (StreamWriter sw = new StreamWriter(saveFileDialog.FileName))
                     {
+                        sw.WriteLine("begin");
+                        sw.WriteLine("cls()");
+                        sw.WriteLine("close(tTool)");
+                        sw.WriteLine("open(tTool1)");
+                        sw.WriteLine("nError=setFrame(pOrigin,pX,pY,fMasa)");
+
                         foreach (string command in commands)
                         {
                             sw.WriteLine(command);
                         }
+
+                        sw.WriteLine("end");
                     }
                 }
             }
         }
-
-
-
-
 
         #endregion
 
@@ -208,14 +209,6 @@ namespace WFAStaubli
             return (lines, curves);
         }
 
-
-        private double GetDistance(Point p1, Point p2)
-        {
-            return Math.Sqrt(Math.Pow(p2.X - p1.X, 2) + Math.Pow(p2.Y - p1.Y, 2));
-        }
-
-
-
         private List<List<Point>> GroupAdjacentPoints(List<Point> path)
         {
             List<List<Point>> groups = new List<List<Point>>();
@@ -262,34 +255,6 @@ namespace WFAStaubli
 
             return groups;
         }
-
-
-        //private bool IsLine(List<Point> points)
-        //{
-        //    // Consider adjusting the slope tolerance or using a different line detection logic
-        //    const double slopeTolerance = 0.2; // Adjusted tolerance
-
-        //    if (points.Count < 2)
-        //    {
-        //        return false;
-        //    }
-
-        //    // You could also consider using a more sophisticated line fitting approach here
-        //    Point startPoint = points.First();
-        //    Point endPoint = points.Last();
-        //    double expectedSlope = Math.Abs(endPoint.Y - startPoint.Y) / (double)(endPoint.X - startPoint.X + 0.0001);
-
-        //    foreach (Point point in points)
-        //    {
-        //        double actualSlope = Math.Abs(point.Y - startPoint.Y) / (double)(point.X - startPoint.X + 0.0001);
-        //        if (Math.Abs(actualSlope - expectedSlope) > slopeTolerance)
-        //        {
-        //            return false;
-        //        }
-        //    }
-
-        //    return true;
-        //}
         private bool IsLine(List<Point> points)
         {
             if (points.Count < 2)
@@ -311,33 +276,12 @@ namespace WFAStaubli
 
             return true;
         }
-
-
-        private double CalculateAngle(Point a, Point b, Point c)
-        {
-            var ab = Math.Sqrt(Math.Pow(b.X - a.X, 2) + Math.Pow(b.Y - a.Y, 2));
-            var bc = Math.Sqrt(Math.Pow(b.X - c.X, 2) + Math.Pow(b.Y - c.Y, 2));
-            var ac = Math.Sqrt(Math.Pow(c.X - a.X, 2) + Math.Pow(c.Y - a.Y, 2));
-            return Math.Acos((bc * bc + ab * ab - ac * ac) / (2 * bc * ab)) * (180 / Math.PI);
-        }
-
-
+        
         private double DistanceFromPointToLine(Point p, Point a, Point b)
         {
             double normalLength = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
             return Math.Abs((p.X - a.X) * (b.Y - a.Y) - (p.Y - a.Y) * (b.X - a.X)) / normalLength;
         }
-
-
-        private bool IsPointOnLine(Point a, Point b, Point point)
-        {
-            // Basic collinearity check (within a tolerance to account for integer rounding)
-            int dx = b.X - a.X;
-            int dy = b.Y - a.Y;
-            int crossProduct = (point.Y - a.Y) * dx - (point.X - a.X) * dy;
-            return Math.Abs(crossProduct) < 1000;  // Adjust tolerance as needed
-        }
-
 
         #endregion
 
@@ -427,40 +371,72 @@ namespace WFAStaubli
 
         #endregion
 
+        #region Orientation Detection
+
+        private double[] DetectOrientation(Bitmap image)
+        {
+            double rx = 0; // Placeholder for rotation around the X-axis
+            double ry = 0; // Placeholder for rotation around the Y-axis
+            double rz = 0; // Placeholder for rotation around the Z-axis
+
+            return new double[] { rx, ry, rz };
+        }
+
+        #endregion
+
         #region Robot Komutlarını Oluşturma
-        private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
+
+        private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves, double[] defaultRotation)
         {
             List<string> commands = new List<string>();
+
+            // Assume that DetectOrientation method exists and it returns a double array
+            // with the orientation [Rx, Ry, Rz]
+            double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
+
+            commands.Add("movej(appro(pPoint1,{ 0 , 0 , 0 , 0 , 0 , 0 }),tTool,mFast)");
 
             // Process lines
             foreach (var line in lines)
             {
-                // MoveJ to the start of the line
-                commands.Add($"moveJ({line.P1.X}, {line.P1.Y})");
-                // MoveL to the end of the line
-                commands.Add($"moveL({line.P2.X}, {line.P2.Y})");
+                // Scale points for robot coordinates
+                var (robotX1, robotY1) = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
+                var (robotX2, robotY2) = DefinePoint(line.P2.X, line.P2.Y, scaleFactor);
+
+                // Use your own method to calculate the actual z, rx, ry, rz based on the image analysis
+                double[] startOrientation = CalculateOrientationForPoint(new Point((int)robotX1, (int)robotY1));
+                double[] endOrientation = CalculateOrientationForPoint(new Point((int)robotX2, (int)robotY2));
+
+                // Add commands for the robot to move to the start of the line
+                // z=0
+                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
+                // z=20
+                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
+
+                // Add commands for the robot to draw the line
+                commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation));
             }
 
             // Process curves
-            // For simplicity, assuming a curve is a series of MoveL commands
             foreach (var curve in curves)
             {
-                // MoveJ to the start of the curve
-                Point startPoint = curve[0];
-                commands.Add($"moveJ({startPoint.X}, {startPoint.Y})");
-
-                // MoveL through the curve
-                for (int i = 1; i < curve.Size; i++)
+                for (int i = 0; i < curve.Size; i++)
                 {
                     Point point = curve[i];
-                    commands.Add($"moveL({point.X}, {point.Y})");
+                    var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor);
+                    double[] orientation = (i == 0) ? defaultOrientation : CalculateOrientationForPoint(new Point((int)robotX, (int)robotY));
+                    string commandType = (i == 0) ? "movej" : "movel";
+                    commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation));
                 }
             }
 
             return commands;
         }
+
+        
         #endregion
 
+        #region Yardımcı Metotlar
         private void UpdateDebugInfo(string text)
         {
             // Assuming you have a label named debugLabel for debugging output
@@ -473,5 +449,72 @@ namespace WFAStaubli
                 debugLabel.Text = text;
             }
         }
+
+        private string FormatCommand(string commandType, Point point, double[] orientation)
+        {
+            // Assumes that the orientation array contains [Rx, Ry, Rz]
+            return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {GetZValue(point)}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
+        }
+
+        private bool isFirstPoint = true; 
+        private double GetZValue(Point point)
+        {
+            if (isFirstPoint)
+            {
+                isFirstPoint = false;
+                return 0;
+            }
+
+            return 20;
+        }
+
+        private void ResetFirstPoint()
+        {
+            isFirstPoint = true;
+        }
+
+        private double[] CalculateOrientationForPoint(Point point)
+        {
+            double rx = 0;
+            double ry = 0;
+            double rz = 0;
+
+            return new double[] { rx, ry, rz };
+        }
+        private List<Point> SortPathPoints(List<Point> points)
+        {
+            if (points.Count == 0) return new List<Point>();
+
+            List<Point> sortedPoints = new List<Point>();
+            Point currentPoint = points[0];
+            sortedPoints.Add(currentPoint);
+            points.Remove(currentPoint);
+
+            while (points.Count > 0)
+            {
+                // Find the closest point to the current point
+                currentPoint = points.Aggregate((current, next) => Distance(currentPoint, next) < Distance(currentPoint, current) ? next : current);
+                sortedPoints.Add(currentPoint);
+                points.Remove(currentPoint);
+            }
+
+            return sortedPoints;
+        }
+
+        private double Distance(Point p1, Point p2)
+        {
+            return Math.Sqrt((p2.X - p1.X) * (p2.X - p1.X) + (p2.Y - p1.Y) * (p2.Y - p1.Y));
+        }
+
+        private double scaleFactor = 0.1;
+
+        public static (double, double) DefinePoint(double imageX, double imageY, double scaleFactor)
+        {
+            double robotX = imageX * scaleFactor;
+            double robotY = imageY * scaleFactor;
+            return (robotX, robotY);
+        }
+        #endregion
+
     }
 }
