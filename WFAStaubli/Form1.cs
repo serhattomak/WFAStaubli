@@ -9,10 +9,12 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Xml.Linq;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
+using static System.Windows.Forms.LinkLabel;
 
 namespace WFAStaubli
 {
@@ -78,30 +80,24 @@ namespace WFAStaubli
 
                 var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(sortedPoints); // Use sorted points here
 
-                List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation); // Assuming rotation is used here
+
 
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
-                    Filter = "Text Files (*.txt)|*.txt|All files (*.*)|*.*",
+                    Filter = "Text Files (*.txt)|*.txt|PGX Files (*.pgx)|*.pgx",
                     Title = "Save Robot Commands"
                 };
 
                 if (saveFileDialog.ShowDialog() == DialogResult.OK)
                 {
-                    using (StreamWriter sw = new StreamWriter(saveFileDialog.FileName))
+                    List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation); // Assuming rotation is used here
+                    if (saveFileDialog.FileName.EndsWith(".txt"))
                     {
-                        sw.WriteLine("begin");
-                        sw.WriteLine("cls()");
-                        sw.WriteLine("close(tTool)");
-                        sw.WriteLine("open(tTool1)");
-                        sw.WriteLine("nError=setFrame(pOrigin,pX,pY,fMasa)");
-
-                        foreach (string command in commands)
-                        {
-                            sw.WriteLine(command);
-                        }
-
-                        sw.WriteLine("end");
+                        SaveCommandsAsText(saveFileDialog.FileName, commands);
+                    }
+                    else if (saveFileDialog.FileName.EndsWith(".pgx"))
+                    {
+                        SaveCommandsAsXml(saveFileDialog.FileName, commands);
                     }
                 }
             }
@@ -539,6 +535,48 @@ namespace WFAStaubli
             double robotY = imageY * scaleFactor;
             return (robotX, robotY);
         }
+
+        private void SaveCommandsAsXml(string filePath, List<string> commands)
+        {
+            using (StreamWriter sw = new StreamWriter(filePath))
+            {
+                sw.WriteLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+                sw.WriteLine("<Programs xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns=\"http://www.staubli.com/robotics/VAL3/Program/2\">");
+                sw.WriteLine("  <Program name=\"start\">");
+                sw.WriteLine("    <Code><![CDATA[");
+                sw.WriteLine("begin");
+                sw.WriteLine("cls()");
+                sw.WriteLine("close(tTool)");
+                sw.WriteLine("open(tTool1)");
+                sw.WriteLine("nError=setFrame(pOrigin,pX,pY,fMasa)");
+                foreach (string command in commands)
+                {
+                    sw.WriteLine(command);
+                }
+                sw.WriteLine("end");
+                sw.WriteLine("]]></Code>");
+                sw.WriteLine("  </Program>");
+                sw.WriteLine("</Programs>");
+            }
+        }
+
+        private void SaveCommandsAsText(string filePath, List<string> commands)
+        {
+            using (StreamWriter sw = new StreamWriter(filePath))
+            {
+                sw.WriteLine("begin");
+                sw.WriteLine("cls()");
+                sw.WriteLine("close(tTool)");
+                sw.WriteLine("open(tTool1)");
+                sw.WriteLine("nError=setFrame(pOrigin,pX,pY,fMasa)");
+                foreach (string command in commands)
+                {
+                    sw.WriteLine(command);
+                }
+                sw.WriteLine("end");
+            }
+        }
+
         #endregion
 
     }
