@@ -276,7 +276,7 @@ namespace WFAStaubli
 
             return true;
         }
-        
+
         private double DistanceFromPointToLine(Point p, Point a, Point b)
         {
             double normalLength = Math.Sqrt((b.X - a.X) * (b.X - a.X) + (b.Y - a.Y) * (b.Y - a.Y));
@@ -390,11 +390,15 @@ namespace WFAStaubli
         {
             List<string> commands = new List<string>();
 
+            double safeHeight = 50;
+
             // Assume that DetectOrientation method exists and it returns a double array
             // with the orientation [Rx, Ry, Rz]
             double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
 
             commands.Add("movej(appro(pPoint1,{ 0 , 0 , 0 , 0 , 0 , 0 }),tTool,mFast)");
+
+            Point lastPoint = new Point();
 
             // Process lines
             foreach (var line in lines)
@@ -410,11 +414,21 @@ namespace WFAStaubli
                 // Add commands for the robot to move to the start of the line
                 // z=0
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
-                // z=20
+                if (!lastPoint.IsEmpty)
+                {
+                    // Move up to safe height before moving to the next start
+                    commands.Add(FormatCommand("movej", lastPoint, new double[] { 0, 0, safeHeight }));
+                }
+
+                // Move to the start of the line at safe height
+                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), new double[] { 0, 0, safeHeight }));
+                // Move down to start drawing
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
 
-                // Add commands for the robot to draw the line
+                // Draw the line
                 commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation));
+
+                lastPoint = new Point((int)robotX2, (int)robotY2);  // Update last point for next iteration
             }
 
             // Process curves
@@ -426,14 +440,25 @@ namespace WFAStaubli
                     var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor);
                     double[] orientation = (i == 0) ? defaultOrientation : CalculateOrientationForPoint(new Point((int)robotX, (int)robotY));
                     string commandType = (i == 0) ? "movej" : "movel";
+                    if (i == 0 && !lastPoint.IsEmpty)
+                    {
+                        // Move up to safe height before moving to the next curve start
+                        commands.Add(FormatCommand("movej", lastPoint, new double[] { 0, 0, safeHeight }));
+                        commands.Add(FormatCommand("movej", new Point((int)robotX, (int)robotY), new double[] { 0, 0, safeHeight }));
+                    }
+
                     commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation));
+                    if (i == curve.Size - 1)
+                    {
+                        lastPoint = new Point((int)robotX, (int)robotY);  // Update last point for next iteration
+                    }
                 }
             }
 
             return commands;
         }
 
-        
+
         #endregion
 
         #region Yardımcı Metotlar
@@ -456,7 +481,7 @@ namespace WFAStaubli
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {GetZValue(point)}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
         }
 
-        private bool isFirstPoint = true; 
+        private bool isFirstPoint = true;
         private double GetZValue(Point point)
         {
             if (isFirstPoint)
