@@ -386,48 +386,41 @@ namespace WFAStaubli
         {
             List<string> commands = new List<string>();
 
-            double safeHeight = 50;
+            double safeHeight = -50;  // Safe height above the work surface
+            double drawHeight = -20;  // Drawing height when the tool is engaged with the material
+            bool isFirstCommand = true;  // Flag to check if it's the first command
 
-            // Assume that DetectOrientation method exists and it returns a double array
-            // with the orientation [Rx, Ry, Rz]
             double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
 
-            commands.Add("movej(appro(pPoint1,{ 0 , 0 , 0 , 0 , 0 , 0 }),tTool,mFast)");
+            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, 0)); // Start at home position with Z = 0
 
             Point lastPoint = new Point();
 
             // Process lines
             foreach (var line in lines)
             {
-                // Scale points for robot coordinates
                 var (robotX1, robotY1) = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
                 var (robotX2, robotY2) = DefinePoint(line.P2.X, line.P2.Y, scaleFactor);
 
-                // Use your own method to calculate the actual z, rx, ry, rz based on the image analysis
                 double[] startOrientation = CalculateOrientationForPoint(new Point((int)robotX1, (int)robotY1));
                 double[] endOrientation = CalculateOrientationForPoint(new Point((int)robotX2, (int)robotY2));
 
-                // Add commands for the robot to move to the start of the line
-                // z=0
-                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
                 if (!lastPoint.IsEmpty)
                 {
-                    // Move up to safe height before moving to the next start
-                    commands.Add(FormatCommand("movej", lastPoint, new double[] { 0, 0, safeHeight }));
+                    commands.Add(FormatCommand("movej", lastPoint, defaultOrientation, safeHeight));
                 }
 
-                // Move to the start of the line at safe height
-                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), new double[] { 0, 0, safeHeight }));
-                // Move down to start drawing
-                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation));
+                double firstPointZ = isFirstCommand ? 0 : safeHeight; // Use 0 for the first point's Z value
+                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, firstPointZ));
+                isFirstCommand = false; // Reset the flag after using it once
 
-                // Draw the line
-                commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation));
+                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, drawHeight));
+                commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation, drawHeight));
 
-                lastPoint = new Point((int)robotX2, (int)robotY2);  // Update last point for next iteration
+                lastPoint = new Point((int)robotX2, (int)robotY2);
             }
 
-            // Process curves
+            // Process curves in a similar manner
             foreach (var curve in curves)
             {
                 for (int i = 0; i < curve.Size; i++)
@@ -436,17 +429,20 @@ namespace WFAStaubli
                     var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor);
                     double[] orientation = (i == 0) ? defaultOrientation : CalculateOrientationForPoint(new Point((int)robotX, (int)robotY));
                     string commandType = (i == 0) ? "movej" : "movel";
+
                     if (i == 0 && !lastPoint.IsEmpty)
                     {
-                        // Move up to safe height before moving to the next curve start
-                        commands.Add(FormatCommand("movej", lastPoint, new double[] { 0, 0, safeHeight }));
-                        commands.Add(FormatCommand("movej", new Point((int)robotX, (int)robotY), new double[] { 0, 0, safeHeight }));
+                        commands.Add(FormatCommand("movej", lastPoint, orientation, safeHeight));
+                        commands.Add(FormatCommand("movej", new Point((int)robotX, (int)robotY), orientation, safeHeight));
                     }
 
-                    commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation));
+                    double pointZ = (i == 0 && isFirstCommand) ? 0 : drawHeight;
+                    commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation, pointZ));
+                    isFirstCommand = false;  // Ensure the first point check is only used once
+
                     if (i == curve.Size - 1)
                     {
-                        lastPoint = new Point((int)robotX, (int)robotY);  // Update last point for next iteration
+                        lastPoint = new Point((int)robotX, (int)robotY);
                     }
                 }
             }
@@ -476,6 +472,13 @@ namespace WFAStaubli
             // Assumes that the orientation array contains [Rx, Ry, Rz]
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {GetZValue(point)}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
         }
+        private string FormatCommand(string commandType, Point point, double[] orientation, double? zOverride=null)
+        {
+            double zValue = zOverride ?? GetZValue(point);
+
+            return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
+        }
+
 
         private bool isFirstPoint = true;
         private double GetZValue(Point point)
@@ -486,7 +489,7 @@ namespace WFAStaubli
                 return 0;
             }
 
-            return 20;
+            return -20;
         }
 
         private void ResetFirstPoint()
