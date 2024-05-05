@@ -386,8 +386,8 @@ namespace WFAStaubli
         {
             List<string> commands = new List<string>();
 
-            double safeHeight = -50;  // Safe height above the work surface
-            double drawHeight = -20;  // Drawing height when the tool is engaged with the material
+            double safeHeight = -20;  // Safe height above the work surface
+            double drawHeight = 20;  // Drawing height when the tool is engaged with the material
             bool isFirstCommand = true;  // Flag to check if it's the first command
 
             double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
@@ -489,7 +489,7 @@ namespace WFAStaubli
                 return 0;
             }
 
-            return -20;
+            return 20;
         }
 
         private void ResetFirstPoint()
@@ -556,6 +556,7 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
+                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
                 sw.WriteLine("]]></Code>");
                 sw.WriteLine("  </Program>");
@@ -576,6 +577,7 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
+                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
             }
         }
