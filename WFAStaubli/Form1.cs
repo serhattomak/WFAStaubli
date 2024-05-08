@@ -117,15 +117,24 @@ namespace WFAStaubli
                 for (int j = 0; j < originalImage.Height; j++)
                 {
                     Color originalColor = originalImage.GetPixel(i, j);
-                    // Calculate the grayscale value
-                    int grayScale = (int)((originalColor.R * 0.3) + (originalColor.G * 0.59) + (originalColor.B * 0.11));
-                    // Apply the threshold
-                    Color newColor = grayScale < 128 ? Color.FromArgb(255, 0, 0, 0) : Color.FromArgb(255, 255, 255, 255);
-                    blackAndWhiteImage.SetPixel(i, j, newColor);
+                    // Check if the pixel is transparent by examining the alpha value
+                    if (originalColor.A < 128) // Assuming transparency threshold at 128
+                    {
+                        blackAndWhiteImage.SetPixel(i, j, Color.White); // Set transparent areas to white
+                    }
+                    else
+                    {
+                        // Calculate the grayscale value using luminosity method
+                        int grayScale = (int)((originalColor.R * 0.3) + (originalColor.G * 0.59) + (originalColor.B * 0.11));
+                        // Apply the threshold
+                        Color newColor = grayScale < 128 ? Color.Black : Color.White; // Adjust threshold here if needed
+                        blackAndWhiteImage.SetPixel(i, j, newColor);
+                    }
                 }
             }
             return blackAndWhiteImage;
         }
+
 
         #endregion
 
@@ -460,6 +469,8 @@ namespace WFAStaubli
 
 
 
+
+
         #endregion
 
         #region Yardımcı Metotlar
@@ -487,7 +498,6 @@ namespace WFAStaubli
 
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
         }
-
 
         private bool isFirstPoint = true;
         private double GetZValue(Point point)
@@ -589,6 +599,33 @@ namespace WFAStaubli
                 sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
             }
+        }
+
+        private List<Point> SmoothPath(List<Point> points, int windowSize = 5)
+        {
+            List<Point> smoothedPoints = new List<Point>();
+            int halfWindow = windowSize / 2;
+
+            for (int i = 0; i < points.Count; i++)
+            {
+                double sumX = 0;
+                double sumY = 0;
+                int actualWindowSize = 0;
+
+                for (int j = -halfWindow; j <= halfWindow; j++)
+                {
+                    int k = i + j;
+                    if (k >= 0 && k < points.Count)
+                    {
+                        sumX += points[k].X;
+                        sumY += points[k].Y;
+                        actualWindowSize++;
+                    }
+                }
+
+                smoothedPoints.Add(new Point((int)(sumX / actualWindowSize), (int)(sumY / actualWindowSize)));
+            }
+            return smoothedPoints;
         }
 
         #endregion
