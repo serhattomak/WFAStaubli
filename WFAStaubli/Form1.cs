@@ -408,13 +408,19 @@ namespace WFAStaubli
                 if (!lastPoint.IsEmpty)
                 {
                     commands.Add(FormatCommand("movej", lastPoint, defaultOrientation, safeHeight));
+                    commands.Add("waitEndMove()");
                 }
 
-                double firstPointZ = isFirstCommand ? 0 : safeHeight; // Use 0 for the first point's Z value
+                double firstPointZ = isFirstCommand ? 0 : safeHeight;
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, firstPointZ));
+                if (!isFirstCommand)
+                {
+                    commands.Add("waitEndMove()");
+                }
                 isFirstCommand = false; // Reset the flag after using it once
 
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, drawHeight));
+                commands.Add("waitEndMove()");
                 commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation, drawHeight));
 
                 lastPoint = new Point((int)robotX2, (int)robotY2);
@@ -433,7 +439,9 @@ namespace WFAStaubli
                     if (i == 0 && !lastPoint.IsEmpty)
                     {
                         commands.Add(FormatCommand("movej", lastPoint, orientation, safeHeight));
+                        commands.Add("waitEndMove()");
                         commands.Add(FormatCommand("movej", new Point((int)robotX, (int)robotY), orientation, safeHeight));
+                        commands.Add("waitEndMove()");
                     }
 
                     double pointZ = (i == 0 && isFirstCommand) ? 0 : drawHeight;
@@ -449,6 +457,7 @@ namespace WFAStaubli
 
             return commands;
         }
+
 
 
         #endregion
@@ -530,7 +539,7 @@ namespace WFAStaubli
             return Math.Sqrt((p2.X - p1.X) * (p2.X - p1.X) + (p2.Y - p1.Y) * (p2.Y - p1.Y));
         }
 
-        private double scaleFactor = 0.1;
+        private double scaleFactor = 0.5;
 
         public static (double, double) DefinePoint(double imageX, double imageY, double scaleFactor)
         {
