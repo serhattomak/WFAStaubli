@@ -62,7 +62,7 @@ namespace WFAStaubli
             ResetFirstPoint();
             if (pcbConverted.Image != null)
             {
-                Bitmap convertedImage = pcbConverted.Image as Bitmap; // Safe cast
+                Bitmap convertedImage = pcbConverted.Image as Bitmap;
 
                 if (convertedImage == null || convertedImage.Width == 0 || convertedImage.Height == 0)
                 {
@@ -70,17 +70,13 @@ namespace WFAStaubli
                     return;
                 }
 
-                double[] rotation = DetectOrientation(convertedImage); // Now correctly passing a Bitmap
-
-                var initialLines = DetectLines(convertedImage);
-                var initialCurves = DetectCurves(convertedImage);
-
+                double[] rotation = DetectOrientation(convertedImage);
                 List<Point> pathPoints = CreatePathFromImage(convertedImage);
-                List<Point> sortedPoints = SortPathPoints(pathPoints); // Sort points for logical movement
+                List<Point> interpolatedPoints = InterpolatePoints(pathPoints, 5);
+                List<Point> sortedPoints = SortPathPoints(interpolatedPoints);
+                List<Point> smoothedPoints = SmoothPath(sortedPoints);
 
-                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(sortedPoints); // Use sorted points here
-
-
+                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(smoothedPoints);
 
                 SaveFileDialog saveFileDialog = new SaveFileDialog
                 {
@@ -90,7 +86,7 @@ namespace WFAStaubli
 
                 if (saveFileDialog.ShowDialog() == DialogResult.OK)
                 {
-                    List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation); // Assuming rotation is used here
+                    List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation);
                     if (saveFileDialog.FileName.EndsWith(".txt"))
                     {
                         SaveCommandsAsText(saveFileDialog.FileName, commands);
@@ -110,31 +106,57 @@ namespace WFAStaubli
         // Siyah - Beyaz Dönüşüm Metodu
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
-            Bitmap blackAndWhiteImage = new Bitmap(originalImage.Width, originalImage.Height);
+            // Convert Bitmap to Image<Gray, byte> for processing
+            Image<Gray, byte> grayImage = new Image<Gray, byte>(originalImage.Width, originalImage.Height);
 
+            // Processing each pixel
             for (int i = 0; i < originalImage.Width; i++)
             {
                 for (int j = 0; j < originalImage.Height; j++)
                 {
                     Color originalColor = originalImage.GetPixel(i, j);
-                    // Check if the pixel is transparent by examining the alpha value
                     if (originalColor.A < 128) // Assuming transparency threshold at 128
                     {
-                        blackAndWhiteImage.SetPixel(i, j, Color.White); // Set transparent areas to white
+                        grayImage.Data[j, i, 0] = 255; // Set to white
                     }
                     else
                     {
-                        // Calculate the grayscale value using luminosity method
                         int grayScale = (int)((originalColor.R * 0.3) + (originalColor.G * 0.59) + (originalColor.B * 0.11));
-                        // Apply the threshold
-                        Color newColor = grayScale < 128 ? Color.Black : Color.White; // Adjust threshold here if needed
-                        blackAndWhiteImage.SetPixel(i, j, newColor);
+                        grayImage.Data[j, i, 0] = grayScale < 128 ? (byte)0 : (byte)255; // Set to black or white based on threshold
                     }
                 }
             }
-            return blackAndWhiteImage;
+
+            // Apply dilation to achieve approximately 10 pixels thickness
+            int dilationSize = 5; // This will create a dilation effect of approximately 10 pixels in diameter
+            Mat element = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
+            CvInvoke.Dilate(grayImage, grayImage, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+
+            return grayImage.ToBitmap();
         }
 
+
+        // Method to apply dilation and erosion
+        private Bitmap ApplyDilationAndErosion(Bitmap image)
+        {
+            Bitmap result = new Bitmap(image.Width, image.Height);
+
+            using (Mat imageMat = image.ToMat())
+            {
+                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
+                CvInvoke.Threshold(imageMat, imageMat, 128, 255, ThresholdType.Binary);
+
+                Mat element = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(3, 3), new Point(-1, -1));
+
+                // Dilation followed by Erosion
+                CvInvoke.Dilate(imageMat, imageMat, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+                CvInvoke.Erode(imageMat, imageMat, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+
+                result = imageMat.ToBitmap();
+            }
+
+            return result;
+        }
 
         #endregion
 
@@ -145,43 +167,28 @@ namespace WFAStaubli
         private List<Point> CreatePathFromImage(Bitmap image)
         {
             List<Point> path = new List<Point>();
-            const int proximityThreshold = 5; // Points within this distance will be considered in the same cluster
+            const int proximityThreshold = 5;
             bool[,] visited = new bool[image.Width, image.Height];
-
             for (int y = 0; y < image.Height; y++)
             {
                 for (int x = 0; x < image.Width; x++)
                 {
-                    if (visited[x, y])
-                        continue;
-
-                    Color pixelColor = image.GetPixel(x, y);
-                    if (pixelColor.R == 0 && pixelColor.G == 0 && pixelColor.B == 0)
+                    if (!visited[x, y] && image.GetPixel(x, y).R == 0)
                     {
-                        // Found a black pixel
-                        bool isIsolated = true;
-                        for (int nx = Math.Max(0, x - proximityThreshold); nx < Math.Min(image.Width, x + proximityThreshold); nx++)
+                        for (int ny = Math.Max(0, y - proximityThreshold); ny < Math.Min(image.Height, y + proximityThreshold); ny++)
                         {
-                            for (int ny = Math.Max(0, y - proximityThreshold); ny < Math.Min(image.Height, y + proximityThreshold); ny++)
+                            for (int nx = Math.Max(0, x - proximityThreshold); nx < Math.Min(image.Width, x + proximityThreshold); nx++)
                             {
-                                if (nx == x && ny == y) continue; // skip the current pixel
-
-                                if (image.GetPixel(nx, ny).R == 0 && image.GetPixel(nx, ny).G == 0 && image.GetPixel(nx, ny).B == 0)
+                                if (image.GetPixel(nx, ny).R == 0)
                                 {
-                                    visited[nx, ny] = true; // Mark nearby black pixels as visited
-                                    isIsolated = false;
+                                    visited[nx, ny] = true;
                                 }
                             }
                         }
-
-                        if (!isIsolated)
-                        {
-                            path.Add(new Point(x, y));
-                        }
+                        path.Add(new Point(x, y));
                     }
                 }
             }
-
             return path;
         }
 
@@ -380,11 +387,7 @@ namespace WFAStaubli
 
         private double[] DetectOrientation(Bitmap image)
         {
-            double rx = 0; // Placeholder for rotation around the X-axis
-            double ry = 0; // Placeholder for rotation around the Y-axis
-            double rz = 0; // Placeholder for rotation around the Z-axis
-
-            return new double[] { rx, ry, rz };
+            return new double[] { 0, 0, 0 }; // Placeholder for actual orientation detection
         }
 
         #endregion
@@ -394,18 +397,15 @@ namespace WFAStaubli
         private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves, double[] defaultRotation)
         {
             List<string> commands = new List<string>();
-
-            double safeHeight = -20;  // Safe height above the work surface
-            double drawHeight = 20;  // Drawing height when the tool is engaged with the material
-            bool isFirstCommand = true;  // Flag to check if it's the first command
+            double safeHeight = 0;  // Safe height adjusted
+            double drawHeight = 20;  // Draw height adjusted
+            bool isFirstCommand = true;
 
             double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
-
-            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, 0)); // Start at home position with Z = 0
+            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, 0)); // Home position with adjusted heights
 
             Point lastPoint = new Point();
 
-            // Process lines
             foreach (var line in lines)
             {
                 var (robotX1, robotY1) = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
@@ -422,12 +422,9 @@ namespace WFAStaubli
 
                 double firstPointZ = isFirstCommand ? 0 : safeHeight;
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, firstPointZ));
-                if (!isFirstCommand)
-                {
-                    commands.Add("waitEndMove()");
-                }
                 isFirstCommand = false; // Reset the flag after using it once
 
+                commands.Add("waitEndMove()");
                 commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, drawHeight));
                 commands.Add("waitEndMove()");
                 commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation, drawHeight));
@@ -435,7 +432,6 @@ namespace WFAStaubli
                 lastPoint = new Point((int)robotX2, (int)robotY2);
             }
 
-            // Process curves in a similar manner
             foreach (var curve in curves)
             {
                 for (int i = 0; i < curve.Size; i++)
@@ -455,7 +451,7 @@ namespace WFAStaubli
 
                     double pointZ = (i == 0 && isFirstCommand) ? 0 : drawHeight;
                     commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation, pointZ));
-                    isFirstCommand = false;  // Ensure the first point check is only used once
+                    isFirstCommand = false;
 
                     if (i == curve.Size - 1)
                     {
@@ -466,10 +462,6 @@ namespace WFAStaubli
 
             return commands;
         }
-
-
-
-
 
         #endregion
 
@@ -492,10 +484,9 @@ namespace WFAStaubli
             // Assumes that the orientation array contains [Rx, Ry, Rz]
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {GetZValue(point)}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
         }
-        private string FormatCommand(string commandType, Point point, double[] orientation, double? zOverride=null)
+        private string FormatCommand(string commandType, Point point, double[] orientation, double? zOverride = null)
         {
             double zValue = zOverride ?? GetZValue(point);
-
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
         }
 
@@ -527,7 +518,6 @@ namespace WFAStaubli
         private List<Point> SortPathPoints(List<Point> points)
         {
             if (points.Count == 0) return new List<Point>();
-
             List<Point> sortedPoints = new List<Point>();
             Point currentPoint = points[0];
             sortedPoints.Add(currentPoint);
@@ -535,12 +525,10 @@ namespace WFAStaubli
 
             while (points.Count > 0)
             {
-                // Find the closest point to the current point
-                currentPoint = points.Aggregate((current, next) => Distance(currentPoint, next) < Distance(currentPoint, current) ? next : current);
+                currentPoint = points.OrderBy(p => Math.Sqrt(Math.Pow((p.X - currentPoint.X), 2) + Math.Pow((p.Y - currentPoint.Y), 2))).First();
                 sortedPoints.Add(currentPoint);
                 points.Remove(currentPoint);
             }
-
             return sortedPoints;
         }
 
@@ -551,7 +539,7 @@ namespace WFAStaubli
 
         private double scaleFactor = 0.5;
 
-        public static (double, double) DefinePoint(double imageX, double imageY, double scaleFactor)
+        private (double, double) DefinePoint(double imageX, double imageY, double scaleFactor)
         {
             double robotX = imageX * scaleFactor;
             double robotY = imageY * scaleFactor;
@@ -605,28 +593,46 @@ namespace WFAStaubli
         {
             List<Point> smoothedPoints = new List<Point>();
             int halfWindow = windowSize / 2;
-
             for (int i = 0; i < points.Count; i++)
             {
                 double sumX = 0;
                 double sumY = 0;
-                int actualWindowSize = 0;
-
+                int count = 0;
                 for (int j = -halfWindow; j <= halfWindow; j++)
                 {
-                    int k = i + j;
-                    if (k >= 0 && k < points.Count)
+                    int idx = i + j;
+                    if (idx >= 0 && idx < points.Count)
                     {
-                        sumX += points[k].X;
-                        sumY += points[k].Y;
-                        actualWindowSize++;
+                        sumX += points[idx].X;
+                        sumY += points[idx].Y;
+                        count++;
                     }
                 }
-
-                smoothedPoints.Add(new Point((int)(sumX / actualWindowSize), (int)(sumY / actualWindowSize)));
+                smoothedPoints.Add(new Point((int)(sumX / count), (int)(sumY / count)));
             }
             return smoothedPoints;
         }
+
+        private List<Point> InterpolatePoints(List<Point> points, int factor)
+        {
+            List<Point> interpolatedPoints = new List<Point>();
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                interpolatedPoints.Add(points[i]);
+                Point start = points[i];
+                Point end = points[i + 1];
+                for (int j = 1; j < factor; j++)
+                {
+                    float t = j / (float)factor;
+                    int interpolatedX = (int)(start.X + t * (end.X - start.X));
+                    int interpolatedY = (int)(start.Y + t * (end.Y - start.Y));
+                    interpolatedPoints.Add(new Point(interpolatedX, interpolatedY));
+                }
+            }
+            interpolatedPoints.Add(points.Last());
+            return interpolatedPoints;
+        }
+
 
         #endregion
 
