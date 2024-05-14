@@ -125,16 +125,19 @@ namespace WFAStaubli
                 }
             }
 
-            // Apply dilation to achieve consistent line thickness
-            int dilationSize = 5; // Adjust this value to control the thickness of the lines
-            Mat element = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
-            CvInvoke.Dilate(grayImage, grayImage, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+            // Apply erosion first to refine the edges and maintain consistent thickness
+            int erosionSize = 2; // Adjust this value to control the refinement of the lines
+            Mat elementErode = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(erosionSize, erosionSize), new Point(-1, -1));
+            CvInvoke.Erode(grayImage, grayImage, elementErode, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
 
-            // Apply erosion to refine the edges and maintain consistent thickness
-            CvInvoke.Erode(grayImage, grayImage, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+            // Apply dilation to achieve consistent line thickness
+            int dilationSize = 2; // Adjust this value to control the thickness of the lines
+            Mat elementDilate = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
+            CvInvoke.Dilate(grayImage, grayImage, elementDilate, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
 
             return grayImage.ToBitmap();
         }
+
 
         #endregion
 
@@ -362,25 +365,30 @@ namespace WFAStaubli
             commands.Add(FormatCommand("movej", DefinePoint(0, 0, scaleFactor), safeHeight)); // Starting at home position
             commands.Add("waitEndMove()");
 
+            // Function to add move commands and avoid unnecessary raising/lowering
+            void AddMoveCommands(Point start, Point end, bool isFirstMove)
+            {
+                if (isFirstMove)
+                {
+                    commands.Add(FormatCommand("movej", start, safeHeight));
+                    commands.Add("waitEndMove()");
+                }
+                else
+                {
+                    commands.Add(FormatCommand("movel", start, drawHeight));
+                }
+                commands.Add(FormatCommand("movej", start, drawHeight));
+                commands.Add("waitEndMove()");
+                commands.Add(FormatCommand("movel", end, drawHeight));
+            }
+
             foreach (var line in lines)
             {
                 Point start = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
                 Point end = DefinePoint(line.P2.X, line.P2.Y, scaleFactor);
 
-                if (isFirstCommand)
-                {
-                    commands.Add(FormatCommand("movej", start, safeHeight));
-                    isFirstCommand = false;
-                }
-                else
-                {
-                    commands.Add(FormatCommand("movel", start, safeHeight));
-                }
-
-                commands.Add("waitEndMove()");
-                commands.Add(FormatCommand("movej", start, drawHeight));
-                commands.Add("waitEndMove()");
-                commands.Add(FormatCommand("movel", end, drawHeight));
+                AddMoveCommands(start, end, isFirstCommand);
+                isFirstCommand = false;
             }
 
             foreach (var curve in curves)
@@ -405,14 +413,10 @@ namespace WFAStaubli
 
             commands.Add("waitEndMove()");
 
-            // Remove consecutive "waitEndMove()" commands
-            for (int i = 1; i < commands.Count; i++)
+            // Ensure the last command is not followed by waitEndMove()
+            if (commands.Last().StartsWith("waitEndMove()"))
             {
-                if (commands[i] == "waitEndMove()" && commands[i - 1] == "waitEndMove()")
-                {
-                    commands.RemoveAt(i);
-                    i--; // Adjust the index to check the current position again after removal
-                }
+                commands.RemoveAt(commands.Count - 1);
             }
 
             return commands;
@@ -483,6 +487,7 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
+                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
                 sw.WriteLine("]]></Code>");
                 sw.WriteLine("  </Program>");
@@ -503,6 +508,7 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
+                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
             }
         }
@@ -539,7 +545,7 @@ namespace WFAStaubli
                 simplified.Add(points.First());
                 for (int i = 1; i < points.Count - 1; i++)
                 {
-                    if (DistanceFromPointToLine(points[i], points.First(), points.Last()) > epsilon)
+                    if (Distance(points[i], simplified.Last()) > epsilon)
                     {
                         simplified.Add(points[i]);
                     }
@@ -547,6 +553,11 @@ namespace WFAStaubli
                 simplified.Add(points.Last());
             }
             return simplified;
+        }
+
+        private double Distance(Point a, Point b)
+        {
+            return Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
         }
 
         #endregion
