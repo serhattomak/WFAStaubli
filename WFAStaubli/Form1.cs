@@ -101,7 +101,6 @@ namespace WFAStaubli
 
         #region Siyah - Beyaz Dönüşüm
 
-        // Siyah - Beyaz Dönüşüm Metodu
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
             // Convert Bitmap to Image<Gray, byte> for processing
@@ -138,12 +137,10 @@ namespace WFAStaubli
             return grayImage.ToBitmap();
         }
 
-
         #endregion
 
         #region Yol Oluşturma
 
-        // Görsel Üzerinden Yol Oluşturma Metodu
         private List<Point> CreatePathFromImage(Bitmap image)
         {
             List<Point> path = new List<Point>();
@@ -151,7 +148,6 @@ namespace WFAStaubli
             CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
             CvInvoke.Threshold(imageMat, imageMat, 128, 255, ThresholdType.Binary);
 
-            // Find contours
             using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
             {
                 CvInvoke.FindContours(imageMat, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
@@ -186,7 +182,6 @@ namespace WFAStaubli
                 }
                 else
                 {
-                    // Treat every non-line group as a curve for now
                     curves.Add(new VectorOfPoint(group.ToArray()));
                 }
             }
@@ -200,8 +195,7 @@ namespace WFAStaubli
         {
             List<List<Point>> groups = new List<List<Point>>();
             List<Point> currentGroup = new List<Point>();
-            // Define the proximity threshold - how close points should be to each other to be considered in the same group
-            int proximityThreshold = 10;  // You may adjust this value based on your image's resolution and scale
+            int proximityThreshold = 10;
 
             foreach (Point point in path)
             {
@@ -212,7 +206,6 @@ namespace WFAStaubli
                 else
                 {
                     Point lastPoint = currentGroup.Last();
-                    // Adjust this distance as needed
                     if (Math.Abs(point.X - lastPoint.X) <= proximityThreshold && Math.Abs(point.Y - lastPoint.Y) <= proximityThreshold)
                     {
                         currentGroup.Add(point);
@@ -245,8 +238,7 @@ namespace WFAStaubli
             Point startPoint = points.First();
             Point endPoint = points.Last();
 
-            // Define a tolerance for how far points can be from the line
-            double tolerance = 5.0; // This can be adjusted based on your needs
+            double tolerance = 5.0;
 
             for (int i = 1; i < points.Count - 1; i++)
             {
@@ -268,7 +260,7 @@ namespace WFAStaubli
         #endregion
 
         #region Çizgi ve Eğri Tanımı (EmguCV)
-        // Çizgi Tespiti
+
         private List<LineSegment2D> DetectLines(Bitmap image)
         {
             List<LineSegment2D> lines = new List<LineSegment2D>();
@@ -278,7 +270,6 @@ namespace WFAStaubli
                 throw new InvalidOperationException("Image is not loaded correctly for line detection.");
             }
 
-            // Convert the Bitmap to a Mat
             using (Mat imageMat = image.ToMat())
             {
                 CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
@@ -287,14 +278,13 @@ namespace WFAStaubli
                     CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
                     LineSegment2D[] detectedLines = CvInvoke.HoughLinesP(
                         cannyEdges,
-                        1, // Distance resolution in pixels
-                        Math.PI / 45.0, // Angle resolution in radians
-                        20, // Threshold
-                        30, // Minimum width of a line
-                        10); // Gap between lines
+                        1,
+                        Math.PI / 45.0,
+                        20,
+                        30,
+                        10);
 
-                    // Filter out short lines
-                    const double minLineLength = 20.0; // Define a minimum line length threshold
+                    const double minLineLength = 20.0;
                     foreach (var line in detectedLines)
                     {
                         if (line.Length >= minLineLength)
@@ -308,7 +298,6 @@ namespace WFAStaubli
             return lines;
         }
 
-        // Eğri Tespiti
         private List<VectorOfPoint> DetectCurves(Bitmap image)
         {
             List<VectorOfPoint> curves = new List<VectorOfPoint>();
@@ -318,17 +307,13 @@ namespace WFAStaubli
                 throw new InvalidOperationException("Image is not loaded correctly for curve detection.");
             }
 
-            // Convert the Bitmap to a Mat
             using (Mat imageMat = image.ToMat())
             {
                 CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
-
-                // Use Canny edge detection
                 using (Mat cannyEdges = new Mat())
                 {
                     CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
 
-                    // Find contours
                     using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
                     {
                         CvInvoke.FindContours(cannyEdges, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
@@ -338,7 +323,7 @@ namespace WFAStaubli
                             {
                                 VectorOfPoint approxContour = new VectorOfPoint();
                                 CvInvoke.ApproxPolyDP(contour, approxContour, CvInvoke.ArcLength(contour, true) * 0.015, true);
-                                if (CvInvoke.ContourArea(approxContour, false) > 10) // Filter small contours
+                                if (CvInvoke.ContourArea(approxContour, false) > 10)
                                 {
                                     curves.Add(approxContour);
                                 }
@@ -358,28 +343,25 @@ namespace WFAStaubli
         private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
         {
             List<string> commands = new List<string>();
-            double safeHeight = 0;  // Safe height for moving without drawing
-            double drawHeight = 20;  // Drawing height
+            double safeHeight = 0;
+            double drawHeight = 20;
             bool isFirstCommand = true;
 
-            commands.Add(FormatCommand("movej", DefinePoint(0, 0, scaleFactor), safeHeight)); // Starting at home position
-            commands.Add("waitEndMove()");
+            commands.Add(FormatCommand("movej", DefinePoint(0, 0, scaleFactor), safeHeight));
 
-            // Function to add move commands and avoid unnecessary raising/lowering
             void AddMoveCommands(Point start, Point end, bool isFirstMove)
             {
                 if (isFirstMove)
                 {
                     commands.Add(FormatCommand("movej", start, safeHeight));
-                    commands.Add("waitEndMove()");
                 }
                 else
                 {
                     commands.Add(FormatCommand("movel", start, drawHeight));
                 }
                 commands.Add(FormatCommand("movej", start, drawHeight));
-                commands.Add("waitEndMove()");
                 commands.Add(FormatCommand("movel", end, drawHeight));
+                commands.Add("waitEndMove()");
             }
 
             foreach (var line in lines)
@@ -400,23 +382,14 @@ namespace WFAStaubli
                     if (i == 0)
                     {
                         commands.Add(FormatCommand("movej", point, safeHeight));
-                        commands.Add("waitEndMove()");
                         commands.Add(FormatCommand("movej", point, drawHeight));
-                        commands.Add("waitEndMove()");
                     }
                     else
                     {
                         commands.Add(FormatCommand("movel", point, drawHeight));
                     }
                 }
-            }
-
-            commands.Add("waitEndMove()");
-
-            // Ensure the last command is not followed by waitEndMove()
-            if (commands.Last().StartsWith("waitEndMove()"))
-            {
-                commands.RemoveAt(commands.Count - 1);
+                commands.Add("waitEndMove()");
             }
 
             return commands;
@@ -428,7 +401,6 @@ namespace WFAStaubli
 
         private void UpdateDebugInfo(string text)
         {
-            // Assuming you have a label named debugLabel for debugging output
             if (this.InvokeRequired)
             {
                 this.Invoke(new Action(() => debugLabel.Text = text));
@@ -487,7 +459,6 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
-                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
                 sw.WriteLine("]]></Code>");
                 sw.WriteLine("  </Program>");
@@ -508,7 +479,6 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
-                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
             }
         }
