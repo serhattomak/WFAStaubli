@@ -9,12 +9,10 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 using System.Windows.Forms;
-using System.Xml.Linq;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
 using Emgu.CV.Structure;
 using Emgu.CV.Util;
-using static System.Windows.Forms.LinkLabel;
 
 namespace WFAStaubli
 {
@@ -41,6 +39,7 @@ namespace WFAStaubli
                 pcbOriginal.SizeMode = PictureBoxSizeMode.StretchImage;
             }
         }
+
         private void btnConvert_Click(object sender, EventArgs e)
         {
             if (pcbOriginal.Image != null)
@@ -57,6 +56,7 @@ namespace WFAStaubli
                 pcbConverted.SizeMode = PictureBoxSizeMode.StretchImage;
             }
         }
+
         private void btnCommand_Click(object sender, EventArgs e)
         {
             ResetFirstPoint();
@@ -70,11 +70,9 @@ namespace WFAStaubli
                     return;
                 }
 
-                double[] rotation = DetectOrientation(convertedImage);
                 List<Point> pathPoints = CreatePathFromImage(convertedImage);
-                List<Point> interpolatedPoints = InterpolatePoints(pathPoints, 5);
-                List<Point> sortedPoints = SortPathPoints(interpolatedPoints);
-                List<Point> smoothedPoints = SmoothPath(sortedPoints);
+                List<Point> simplifiedPoints = SimplifyPath(pathPoints, 5);
+                List<Point> smoothedPoints = SmoothPath(simplifiedPoints);
 
                 var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(smoothedPoints);
 
@@ -86,7 +84,7 @@ namespace WFAStaubli
 
                 if (saveFileDialog.ShowDialog() == DialogResult.OK)
                 {
-                    List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves, rotation);
+                    List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves);
                     if (saveFileDialog.FileName.EndsWith(".txt"))
                     {
                         SaveCommandsAsText(saveFileDialog.FileName, commands);
@@ -127,35 +125,15 @@ namespace WFAStaubli
                 }
             }
 
-            // Apply dilation to achieve approximately 10 pixels thickness
-            int dilationSize = 5; // This will create a dilation effect of approximately 10 pixels in diameter
+            // Apply dilation to achieve consistent line thickness
+            int dilationSize = 5; // Adjust this value to control the thickness of the lines
             Mat element = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
             CvInvoke.Dilate(grayImage, grayImage, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
 
+            // Apply erosion to refine the edges and maintain consistent thickness
+            CvInvoke.Erode(grayImage, grayImage, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
+
             return grayImage.ToBitmap();
-        }
-
-
-        // Method to apply dilation and erosion
-        private Bitmap ApplyDilationAndErosion(Bitmap image)
-        {
-            Bitmap result = new Bitmap(image.Width, image.Height);
-
-            using (Mat imageMat = image.ToMat())
-            {
-                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
-                CvInvoke.Threshold(imageMat, imageMat, 128, 255, ThresholdType.Binary);
-
-                Mat element = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(3, 3), new Point(-1, -1));
-
-                // Dilation followed by Erosion
-                CvInvoke.Dilate(imageMat, imageMat, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
-                CvInvoke.Erode(imageMat, imageMat, element, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
-
-                result = imageMat.ToBitmap();
-            }
-
-            return result;
         }
 
         #endregion
@@ -163,35 +141,29 @@ namespace WFAStaubli
         #region Yol Oluşturma
 
         // Görsel Üzerinden Yol Oluşturma Metodu
-
         private List<Point> CreatePathFromImage(Bitmap image)
         {
             List<Point> path = new List<Point>();
-            const int proximityThreshold = 5;
-            bool[,] visited = new bool[image.Width, image.Height];
-            for (int y = 0; y < image.Height; y++)
+            Mat imageMat = image.ToMat();
+            CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
+            CvInvoke.Threshold(imageMat, imageMat, 128, 255, ThresholdType.Binary);
+
+            // Find contours
+            using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
             {
-                for (int x = 0; x < image.Width; x++)
+                CvInvoke.FindContours(imageMat, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
+                for (int i = 0; i < contours.Size; i++)
                 {
-                    if (!visited[x, y] && image.GetPixel(x, y).R == 0)
+                    VectorOfPoint contour = contours[i];
+                    for (int j = 0; j < contour.Size; j++)
                     {
-                        for (int ny = Math.Max(0, y - proximityThreshold); ny < Math.Min(image.Height, y + proximityThreshold); ny++)
-                        {
-                            for (int nx = Math.Max(0, x - proximityThreshold); nx < Math.Min(image.Width, x + proximityThreshold); nx++)
-                            {
-                                if (image.GetPixel(nx, ny).R == 0)
-                                {
-                                    visited[nx, ny] = true;
-                                }
-                            }
-                        }
-                        path.Add(new Point(x, y));
+                        Point point = contour[j];
+                        path.Add(point);
                     }
                 }
             }
             return path;
         }
-
 
         #endregion
 
@@ -259,14 +231,9 @@ namespace WFAStaubli
                 groups.Add(currentGroup);
             }
 
-            // Debugging: Output the group sizes to understand the grouping
-            foreach (var group in groups)
-            {
-                Debug.WriteLine($"Group size: {group.Count}");
-            }
-
             return groups;
         }
+
         private bool IsLine(List<Point> points)
         {
             if (points.Count < 2)
@@ -383,80 +350,68 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Orientation Detection
-
-        private double[] DetectOrientation(Bitmap image)
-        {
-            return new double[] { 0, 0, 0 }; // Placeholder for actual orientation detection
-        }
-
-        #endregion
-
         #region Robot Komutlarını Oluşturma
 
-        private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves, double[] defaultRotation)
+        private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
         {
             List<string> commands = new List<string>();
-            double safeHeight = 0;  // Safe height adjusted
-            double drawHeight = 20;  // Draw height adjusted
+            double safeHeight = 0;  // Safe height for moving without drawing
+            double drawHeight = 20;  // Drawing height
             bool isFirstCommand = true;
 
-            double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
-            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, 0)); // Home position with adjusted heights
-
-            Point lastPoint = new Point();
+            commands.Add(FormatCommand("movej", DefinePoint(0, 0, scaleFactor), safeHeight)); // Starting at home position
+            commands.Add("waitEndMove()");
 
             foreach (var line in lines)
             {
-                var (robotX1, robotY1) = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
-                var (robotX2, robotY2) = DefinePoint(line.P2.X, line.P2.Y, scaleFactor);
+                Point start = DefinePoint(line.P1.X, line.P1.Y, scaleFactor);
+                Point end = DefinePoint(line.P2.X, line.P2.Y, scaleFactor);
 
-                double[] startOrientation = CalculateOrientationForPoint(new Point((int)robotX1, (int)robotY1));
-                double[] endOrientation = CalculateOrientationForPoint(new Point((int)robotX2, (int)robotY2));
-
-                if (!lastPoint.IsEmpty)
+                if (isFirstCommand)
                 {
-                    commands.Add(FormatCommand("movej", lastPoint, defaultOrientation, safeHeight));
-                    commands.Add("waitEndMove()");
+                    commands.Add(FormatCommand("movej", start, safeHeight));
+                    isFirstCommand = false;
+                }
+                else
+                {
+                    commands.Add(FormatCommand("movel", start, safeHeight));
                 }
 
-                double firstPointZ = isFirstCommand ? 0 : safeHeight;
-                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, firstPointZ));
-                isFirstCommand = false; // Reset the flag after using it once
-
                 commands.Add("waitEndMove()");
-                commands.Add(FormatCommand("movej", new Point((int)robotX1, (int)robotY1), startOrientation, drawHeight));
+                commands.Add(FormatCommand("movej", start, drawHeight));
                 commands.Add("waitEndMove()");
-                commands.Add(FormatCommand("movel", new Point((int)robotX2, (int)robotY2), endOrientation, drawHeight));
-
-                lastPoint = new Point((int)robotX2, (int)robotY2);
+                commands.Add(FormatCommand("movel", end, drawHeight));
             }
 
             foreach (var curve in curves)
             {
                 for (int i = 0; i < curve.Size; i++)
                 {
-                    Point point = curve[i];
-                    var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor);
-                    double[] orientation = (i == 0) ? defaultOrientation : CalculateOrientationForPoint(new Point((int)robotX, (int)robotY));
-                    string commandType = (i == 0) ? "movej" : "movel";
+                    Point point = DefinePoint(curve[i].X, curve[i].Y, scaleFactor);
 
-                    if (i == 0 && !lastPoint.IsEmpty)
+                    if (i == 0)
                     {
-                        commands.Add(FormatCommand("movej", lastPoint, orientation, safeHeight));
+                        commands.Add(FormatCommand("movej", point, safeHeight));
                         commands.Add("waitEndMove()");
-                        commands.Add(FormatCommand("movej", new Point((int)robotX, (int)robotY), orientation, safeHeight));
+                        commands.Add(FormatCommand("movej", point, drawHeight));
                         commands.Add("waitEndMove()");
                     }
-
-                    double pointZ = (i == 0 && isFirstCommand) ? 0 : drawHeight;
-                    commands.Add(FormatCommand(commandType, new Point((int)robotX, (int)robotY), orientation, pointZ));
-                    isFirstCommand = false;
-
-                    if (i == curve.Size - 1)
+                    else
                     {
-                        lastPoint = new Point((int)robotX, (int)robotY);
+                        commands.Add(FormatCommand("movel", point, drawHeight));
                     }
+                }
+            }
+
+            commands.Add("waitEndMove()");
+
+            // Remove consecutive "waitEndMove()" commands
+            for (int i = 1; i < commands.Count; i++)
+            {
+                if (commands[i] == "waitEndMove()" && commands[i - 1] == "waitEndMove()")
+                {
+                    commands.RemoveAt(i);
+                    i--; // Adjust the index to check the current position again after removal
                 }
             }
 
@@ -466,6 +421,7 @@ namespace WFAStaubli
         #endregion
 
         #region Yardımcı Metotlar
+
         private void UpdateDebugInfo(string text)
         {
             // Assuming you have a label named debugLabel for debugging output
@@ -479,15 +435,9 @@ namespace WFAStaubli
             }
         }
 
-        private string FormatCommand(string commandType, Point point, double[] orientation)
+        private string FormatCommand(string commandType, Point point, double zValue)
         {
-            // Assumes that the orientation array contains [Rx, Ry, Rz]
-            return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {GetZValue(point)}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
-        }
-        private string FormatCommand(string commandType, Point point, double[] orientation, double? zOverride = null)
-        {
-            double zValue = zOverride ?? GetZValue(point);
-            return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, {orientation[0]}, {orientation[1]}, {orientation[2]} }}), tTool, mFast)";
+            return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, 0, 0, 0 }}), tTool, mFast)";
         }
 
         private bool isFirstPoint = true;
@@ -507,43 +457,13 @@ namespace WFAStaubli
             isFirstPoint = true;
         }
 
-        private double[] CalculateOrientationForPoint(Point point)
-        {
-            double rx = 0;
-            double ry = 0;
-            double rz = 0;
-
-            return new double[] { rx, ry, rz };
-        }
-        private List<Point> SortPathPoints(List<Point> points)
-        {
-            if (points.Count == 0) return new List<Point>();
-            List<Point> sortedPoints = new List<Point>();
-            Point currentPoint = points[0];
-            sortedPoints.Add(currentPoint);
-            points.Remove(currentPoint);
-
-            while (points.Count > 0)
-            {
-                currentPoint = points.OrderBy(p => Math.Sqrt(Math.Pow((p.X - currentPoint.X), 2) + Math.Pow((p.Y - currentPoint.Y), 2))).First();
-                sortedPoints.Add(currentPoint);
-                points.Remove(currentPoint);
-            }
-            return sortedPoints;
-        }
-
-        private double Distance(Point p1, Point p2)
-        {
-            return Math.Sqrt((p2.X - p1.X) * (p2.X - p1.X) + (p2.Y - p1.Y) * (p2.Y - p1.Y));
-        }
-
         private double scaleFactor = 0.5;
 
-        private (double, double) DefinePoint(double imageX, double imageY, double scaleFactor)
+        private Point DefinePoint(double imageX, double imageY, double scaleFactor)
         {
-            double robotX = imageX * scaleFactor;
-            double robotY = imageY * scaleFactor;
-            return (robotX, robotY);
+            int robotX = (int)(imageX * scaleFactor);
+            int robotY = (int)(imageY * scaleFactor);
+            return new Point(robotX, robotY);
         }
 
         private void SaveCommandsAsXml(string filePath, List<string> commands)
@@ -563,7 +483,6 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
-                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
                 sw.WriteLine("]]></Code>");
                 sw.WriteLine("  </Program>");
@@ -584,7 +503,6 @@ namespace WFAStaubli
                 {
                     sw.WriteLine(command);
                 }
-                sw.WriteLine("waitEndMove()");
                 sw.WriteLine("end");
             }
         }
@@ -613,28 +531,24 @@ namespace WFAStaubli
             return smoothedPoints;
         }
 
-        private List<Point> InterpolatePoints(List<Point> points, int factor)
+        private List<Point> SimplifyPath(List<Point> points, double epsilon)
         {
-            List<Point> interpolatedPoints = new List<Point>();
-            for (int i = 0; i < points.Count - 1; i++)
+            List<Point> simplified = new List<Point>();
+            if (points.Count > 0)
             {
-                interpolatedPoints.Add(points[i]);
-                Point start = points[i];
-                Point end = points[i + 1];
-                for (int j = 1; j < factor; j++)
+                simplified.Add(points.First());
+                for (int i = 1; i < points.Count - 1; i++)
                 {
-                    float t = j / (float)factor;
-                    int interpolatedX = (int)(start.X + t * (end.X - start.X));
-                    int interpolatedY = (int)(start.Y + t * (end.Y - start.Y));
-                    interpolatedPoints.Add(new Point(interpolatedX, interpolatedY));
+                    if (DistanceFromPointToLine(points[i], points.First(), points.Last()) > epsilon)
+                    {
+                        simplified.Add(points[i]);
+                    }
                 }
+                simplified.Add(points.Last());
             }
-            interpolatedPoints.Add(points.Last());
-            return interpolatedPoints;
+            return simplified;
         }
 
-
         #endregion
-
     }
 }
