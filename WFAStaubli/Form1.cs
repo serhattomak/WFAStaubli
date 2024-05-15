@@ -1,13 +1,8 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
-using System.Text;
-using System.Threading.Tasks;
 using System.Windows.Forms;
 using Emgu.CV;
 using Emgu.CV.CvEnum;
@@ -23,7 +18,7 @@ namespace WFAStaubli
             InitializeComponent();
         }
 
-        #region Butonlar
+        #region Buttons
         private void btnUpload_Click(object sender, EventArgs e)
         {
             OpenFileDialog openFileDialog = new OpenFileDialog
@@ -96,36 +91,59 @@ namespace WFAStaubli
             }
         }
 
+        private void btnDraw_Click(object sender, EventArgs e)
+        {
+            if (pcbConverted.Image != null)
+            {
+                Bitmap convertedImage = pcbConverted.Image as Bitmap;
+
+                if (convertedImage == null || convertedImage.Width == 0 || convertedImage.Height == 0)
+                {
+                    MessageBox.Show("Converted image is empty or not a Bitmap.");
+                    return;
+                }
+
+                List<Point> pathPoints = CreatePathFromImage(convertedImage);
+                List<Point> simplifiedPoints = SimplifyPath(pathPoints, 5);
+                List<Point> smoothedPoints = SmoothPath(simplifiedPoints);
+
+                var (refinedLines, refinedCurves) = IdentifyLinesAndCurves(smoothedPoints);
+                List<string> commands = GenerateRobotCommands(refinedLines, refinedCurves);
+
+                DrawRobotCommands(commands);
+            }
+        }
+
         #endregion
 
-        #region Siyah - Beyaz Dönüşüm
+        #region Black-and-White Conversion
 
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
             Image<Gray, byte> grayImage = new Image<Gray, byte>(originalImage.Width, originalImage.Height);
-            
+
             for (int i = 0; i < originalImage.Width; i++)
             {
                 for (int j = 0; j < originalImage.Height; j++)
                 {
                     Color originalColor = originalImage.GetPixel(i, j);
-                    if (originalColor.A < 128) // Assuming transparency threshold at 128
+                    if (originalColor.A < 128)
                     {
-                        grayImage.Data[j, i, 0] = 255; // Set to white
+                        grayImage.Data[j, i, 0] = 255;
                     }
                     else
                     {
                         int grayScale = (int)((originalColor.R * 0.3) + (originalColor.G * 0.59) + (originalColor.B * 0.11));
-                        grayImage.Data[j, i, 0] = grayScale < 128 ? (byte)0 : (byte)255; // Set to black or white based on threshold
+                        grayImage.Data[j, i, 0] = grayScale < 128 ? (byte)0 : (byte)255;
                     }
                 }
             }
-            
+
             int erosionSize = 2;
             Mat elementErode = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(erosionSize, erosionSize), new Point(-1, -1));
             CvInvoke.Erode(grayImage, grayImage, elementErode, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
-            
-            int dilationSize = 2; 
+
+            int dilationSize = 2;
             Mat elementDilate = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
             CvInvoke.Dilate(grayImage, grayImage, elementDilate, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
 
@@ -134,7 +152,7 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Yol Oluşturma
+        #region Path Creation
 
         private List<Point> CreatePathFromImage(Bitmap image)
         {
@@ -161,7 +179,7 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Çizgi ve Eğri Tanımı
+        #region Line and Curve Identification
 
         private (List<LineSegment2D>, List<VectorOfPoint>) IdentifyLinesAndCurves(List<Point> path)
         {
@@ -254,7 +272,7 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Robot Komutlarını Oluşturma
+        #region Robot Command Generation
 
         private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
         {
@@ -264,19 +282,18 @@ namespace WFAStaubli
             bool isFirstCommand = true;
 
             commands.Add(FormatCommand("movej", DefinePoint(0, 0, scaleFactor), safeHeight));
+            commands.Add("waitEndMove()");
 
             void AddMoveCommands(Point start, Point end, bool isFirstMove)
             {
                 if (isFirstMove)
                 {
                     commands.Add(FormatCommand("movej", start, safeHeight));
-                }
-                else
-                {
-                    commands.Add(FormatCommand("movel", start, drawHeight));
+                    commands.Add("waitEndMove()");
                 }
                 commands.Add(FormatCommand("movej", start, drawHeight));
                 commands.Add(FormatCommand("movel", end, drawHeight));
+                commands.Add(FormatCommand("movej", end, safeHeight));
                 commands.Add("waitEndMove()");
             }
 
@@ -298,6 +315,7 @@ namespace WFAStaubli
                     if (i == 0)
                     {
                         commands.Add(FormatCommand("movej", point, safeHeight));
+                        commands.Add("waitEndMove()");
                         commands.Add(FormatCommand("movej", point, drawHeight));
                     }
                     else
@@ -305,7 +323,30 @@ namespace WFAStaubli
                         commands.Add(FormatCommand("movel", point, drawHeight));
                     }
                 }
+
+                Point lastPoint = DefinePoint(curve[curve.Size - 1].X, curve[curve.Size - 1].Y, scaleFactor);
+                commands.Add(FormatCommand("movej", lastPoint, safeHeight));
                 commands.Add("waitEndMove()");
+
+                isFirstCommand = false;
+            }
+
+            // Remove consecutive "waitEndMove()" commands
+            for (int i = commands.Count - 1; i > 0; i--)
+            {
+                if (commands[i] == "waitEndMove()" && commands[i - 1] == "waitEndMove()")
+                {
+                    commands.RemoveAt(i);
+                }
+            }
+
+            // Filter out redundant movej commands (i.e., consecutive movej to the same point)
+            for (int i = commands.Count - 1; i > 1; i--)
+            {
+                if (commands[i].StartsWith("movej") && commands[i - 1].StartsWith("movej") && commands[i] == commands[i - 1])
+                {
+                    commands.RemoveAt(i);
+                }
             }
 
             return commands;
@@ -313,7 +354,7 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Yardımcı Metotlar
+        #region Helper Methods
 
         private void UpdateDebugInfo(string text)
         {
@@ -440,12 +481,87 @@ namespace WFAStaubli
 
         private double Distance(Point a, Point b)
         {
-            return Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
+            return Math.Sqrt(Math.Pow(a.X - b.X, 2) + (Math.Pow(a.Y - b.Y, 2)));
         }
 
         #endregion
 
-        #region Değişkenler
+        #region Drawing Commands
+
+        private void DrawRobotCommands(List<string> commands)
+        {
+            Bitmap drawingImage = new Bitmap(pcbDrawing.Width, pcbDrawing.Height);
+            using (Graphics g = Graphics.FromImage(drawingImage))
+            {
+                g.Clear(Color.White);
+                Pen pen = new Pen(Color.Black, 2);
+
+                Point? lastPoint = null;
+
+                // Determine the bounding box of the points
+                int minX = int.MaxValue, minY = int.MaxValue;
+                int maxX = int.MinValue, maxY = int.MinValue;
+
+                List<Point> allPoints = new List<Point>();
+
+                foreach (var command in commands)
+                {
+                    if (command.StartsWith("movej") || command.StartsWith("movel"))
+                    {
+                        Point point = ParsePointFromCommand(command);
+                        allPoints.Add(point);
+
+                        if (point.X < minX) minX = point.X;
+                        if (point.Y < minY) minY = point.Y;
+                        if (point.X > maxX) maxX = point.X;
+                        if (point.Y > maxY) maxY = point.Y;
+                    }
+                }
+
+                if (allPoints.Count == 0) return;
+
+                // Calculate scaling factor to fit the drawing within the PictureBox
+                double scaleX = (double)pcbDrawing.Width / (maxX - minX);
+                double scaleY = (double)pcbDrawing.Height / (maxY - minY);
+                double scale = Math.Min(scaleX, scaleY);
+
+                // Calculate offsets to center the drawing
+                int offsetX = (int)((pcbDrawing.Width - (maxX - minX) * scale) / 2);
+                int offsetY = (int)((pcbDrawing.Height - (maxY - minY) * scale) / 2);
+
+                foreach (var point in allPoints)
+                {
+                    Point scaledPoint = new Point(
+                        (int)((point.X - minX) * scale) + offsetX,
+                        (int)((point.Y - minY) * scale) + offsetY
+                    );
+
+                    if (lastPoint.HasValue)
+                    {
+                        g.DrawLine(pen, lastPoint.Value, scaledPoint);
+                    }
+
+                    lastPoint = scaledPoint;
+                }
+            }
+
+            pcbDrawing.Image = drawingImage;
+            pcbDrawing.SizeMode = PictureBoxSizeMode.StretchImage;
+        }
+
+        private Point ParsePointFromCommand(string command)
+        {
+            var start = command.IndexOf('{') + 1;
+            var end = command.IndexOf('}');
+            var parts = command.Substring(start, end - start).Split(',');
+            int x = int.Parse(parts[0].Trim());
+            int y = int.Parse(parts[1].Trim());
+            return new Point(x, y);
+        }
+
+        #endregion
+
+        #region Variables
 
         private double scaleFactor = 0.5;
         private bool isFirstPoint = true;
