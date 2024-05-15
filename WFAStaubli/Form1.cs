@@ -34,7 +34,6 @@ namespace WFAStaubli
 
             if (openFileDialog.ShowDialog() == DialogResult.OK)
             {
-                // Load and display the image in the PictureBox
                 pcbOriginal.Image = new Bitmap(openFileDialog.FileName);
                 pcbOriginal.SizeMode = PictureBoxSizeMode.StretchImage;
             }
@@ -103,10 +102,8 @@ namespace WFAStaubli
 
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
-            // Convert Bitmap to Image<Gray, byte> for processing
             Image<Gray, byte> grayImage = new Image<Gray, byte>(originalImage.Width, originalImage.Height);
-
-            // Processing each pixel
+            
             for (int i = 0; i < originalImage.Width; i++)
             {
                 for (int j = 0; j < originalImage.Height; j++)
@@ -123,14 +120,12 @@ namespace WFAStaubli
                     }
                 }
             }
-
-            // Apply erosion first to refine the edges and maintain consistent thickness
-            int erosionSize = 2; // Adjust this value to control the refinement of the lines
+            
+            int erosionSize = 2;
             Mat elementErode = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(erosionSize, erosionSize), new Point(-1, -1));
             CvInvoke.Erode(grayImage, grayImage, elementErode, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
-
-            // Apply dilation to achieve consistent line thickness
-            int dilationSize = 2; // Adjust this value to control the thickness of the lines
+            
+            int dilationSize = 2; 
             Mat elementDilate = CvInvoke.GetStructuringElement(ElementShape.Rectangle, new Size(dilationSize, dilationSize), new Point(-1, -1));
             CvInvoke.Dilate(grayImage, grayImage, elementDilate, new Point(-1, -1), 1, BorderType.Reflect, default(MCvScalar));
 
@@ -259,85 +254,6 @@ namespace WFAStaubli
 
         #endregion
 
-        #region Çizgi ve Eğri Tanımı (EmguCV)
-
-        private List<LineSegment2D> DetectLines(Bitmap image)
-        {
-            List<LineSegment2D> lines = new List<LineSegment2D>();
-
-            if (image == null || image.Width == 0 || image.Height == 0)
-            {
-                throw new InvalidOperationException("Image is not loaded correctly for line detection.");
-            }
-
-            using (Mat imageMat = image.ToMat())
-            {
-                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
-                using (UMat cannyEdges = new UMat())
-                {
-                    CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
-                    LineSegment2D[] detectedLines = CvInvoke.HoughLinesP(
-                        cannyEdges,
-                        1,
-                        Math.PI / 45.0,
-                        20,
-                        30,
-                        10);
-
-                    const double minLineLength = 20.0;
-                    foreach (var line in detectedLines)
-                    {
-                        if (line.Length >= minLineLength)
-                        {
-                            lines.Add(line);
-                        }
-                    }
-                }
-            }
-
-            return lines;
-        }
-
-        private List<VectorOfPoint> DetectCurves(Bitmap image)
-        {
-            List<VectorOfPoint> curves = new List<VectorOfPoint>();
-
-            if (image == null || image.Width == 0 || image.Height == 0)
-            {
-                throw new InvalidOperationException("Image is not loaded correctly for curve detection.");
-            }
-
-            using (Mat imageMat = image.ToMat())
-            {
-                CvInvoke.CvtColor(imageMat, imageMat, ColorConversion.Bgr2Gray);
-                using (Mat cannyEdges = new Mat())
-                {
-                    CvInvoke.Canny(imageMat, cannyEdges, 180, 120);
-
-                    using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
-                    {
-                        CvInvoke.FindContours(cannyEdges, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
-                        for (int i = 0; i < contours.Size; i++)
-                        {
-                            using (VectorOfPoint contour = contours[i])
-                            {
-                                VectorOfPoint approxContour = new VectorOfPoint();
-                                CvInvoke.ApproxPolyDP(contour, approxContour, CvInvoke.ArcLength(contour, true) * 0.015, true);
-                                if (CvInvoke.ContourArea(approxContour, false) > 10)
-                                {
-                                    curves.Add(approxContour);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            return curves;
-        }
-
-        #endregion
-
         #region Robot Komutlarını Oluşturma
 
         private List<string> GenerateRobotCommands(List<LineSegment2D> lines, List<VectorOfPoint> curves)
@@ -416,7 +332,6 @@ namespace WFAStaubli
             return $"{commandType}(appro(pPoint1,{{ {point.X}, {point.Y}, {zValue}, 0, 0, 0 }}), tTool, mFast)";
         }
 
-        private bool isFirstPoint = true;
         private double GetZValue(Point point)
         {
             if (isFirstPoint)
@@ -432,8 +347,6 @@ namespace WFAStaubli
         {
             isFirstPoint = true;
         }
-
-        private double scaleFactor = 0.5;
 
         private Point DefinePoint(double imageX, double imageY, double scaleFactor)
         {
@@ -529,6 +442,13 @@ namespace WFAStaubli
         {
             return Math.Sqrt(Math.Pow(a.X - b.X, 2) + Math.Pow(a.Y - b.Y, 2));
         }
+
+        #endregion
+
+        #region Değişkenler
+
+        private double scaleFactor = 0.5;
+        private bool isFirstPoint = true;
 
         #endregion
     }
