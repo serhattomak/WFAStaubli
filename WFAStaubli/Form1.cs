@@ -437,6 +437,7 @@ namespace WFAStaubli
             double safeHeight = 0;
             double drawHeight = 20;
             bool isFirstCommand = true;
+            bool inDrawing = false;
 
             double[] defaultOrientation = DetectOrientation((Bitmap)pcbConverted.Image);
 
@@ -457,7 +458,7 @@ namespace WFAStaubli
                 double[] startOrientation = CalculateOrientationForPoint(startPoint);
                 double[] endOrientation = CalculateOrientationForPoint(endPoint);
 
-                if (!isFirstCommand && lastZ == safeHeight)
+                if (!isFirstCommand && lastZ == safeHeight && !inDrawing)
                 {
                     commands.Add("waitEndMove()");
                 }
@@ -474,8 +475,8 @@ namespace WFAStaubli
                 isFirstCommand = false;
 
                 commands.Add(FormatCommand("movej", startPoint, startOrientation, drawHeight));
-                commands.Add("waitEndMove()"); // Ensure the robot waits before drawing
                 commands.Add(FormatCommand("movel", endPoint, endOrientation, drawHeight));
+                inDrawing = true;
 
                 lastPoint = endPoint;
                 lastZ = drawHeight;
@@ -493,7 +494,7 @@ namespace WFAStaubli
                     double[] orientation = (i == 0) ? defaultOrientation : CalculateOrientationForPoint(robotPoint);
                     string commandType = (i == 0) ? "movej" : "movel";
 
-                    if (!isFirstCommand && lastZ == safeHeight)
+                    if (!isFirstCommand && lastZ == safeHeight && !inDrawing)
                     {
                         commands.Add("waitEndMove()");
                     }
@@ -503,7 +504,13 @@ namespace WFAStaubli
                     if (pointZ == safeHeight)
                     {
                         commands.Add("waitEndMove()");
+                        inDrawing = false;
                     }
+                    else if (commandType == "movel")
+                    {
+                        inDrawing = true;
+                    }
+
                     isFirstCommand = false;
 
                     if (i == curve.Size - 1)
@@ -723,22 +730,8 @@ namespace WFAStaubli
                 g.Clear(Color.White);
                 Pen pen = new Pen(Color.Black, 2);
 
-                Point? lastPoint = null;
-
-                List<Point> allPoints = new List<Point>();
-
-                foreach (var command in commands)
-                {
-                    if (command.StartsWith("movej") || command.StartsWith("movel"))
-                    {
-                        Point point = ParsePointFromCommand(command);
-                        allPoints.Add(point);
-                    }
-                }
-
-                if (allPoints.Count == 0) return;
-
                 Point? lastDrawingPoint = null;
+                bool inDrawing = false;
 
                 foreach (var command in commands)
                 {
@@ -747,20 +740,26 @@ namespace WFAStaubli
                         Point point = ParsePointFromCommand(command);
                         if (command.StartsWith("movej"))
                         {
-                            lastPoint = point; // Move to the point, lifting the tool
+                            if (inDrawing)
+                            {
+                                g.DrawLine(pen, lastDrawingPoint.Value, point);
+                                inDrawing = false;
+                            }
+                            lastDrawingPoint = point;
                         }
-                        else if (command.StartsWith("movel") && lastPoint.HasValue)
+                        else if (command.StartsWith("movel"))
                         {
                             if (lastDrawingPoint.HasValue)
                             {
-                                g.DrawLine(pen, lastDrawingPoint.Value, point); // Draw line
+                                g.DrawLine(pen, lastDrawingPoint.Value, point);
                             }
                             lastDrawingPoint = point;
+                            inDrawing = true;
                         }
                     }
                     else if (command.StartsWith("waitEndMove()"))
                     {
-                        lastPoint = null; // Lift the tool
+                        inDrawing = false;
                     }
                 }
             }
@@ -768,8 +767,6 @@ namespace WFAStaubli
             pcbDrawing.Image = drawingImage;
             pcbDrawing.SizeMode = PictureBoxSizeMode.StretchImage;
         }
-
-
 
         private Point ParsePointFromCommand(string command)
         {
@@ -780,8 +777,6 @@ namespace WFAStaubli
             int y = int.Parse(parts[1].Trim());
             return new Point(x, y);
         }
-
-
         #endregion
     }
 }
