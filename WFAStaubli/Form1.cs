@@ -124,7 +124,6 @@ namespace WFAStaubli
             return matImage.ToBitmap();
         }
 
-
         private List<VectorOfPoint> DetectContours(Bitmap image)
         {
             // Convert Bitmap to Image<Gray, byte>
@@ -161,8 +160,6 @@ namespace WFAStaubli
                 }
             }
         }
-
-
 
         private List<string> GenerateRobotCommands(List<VectorOfPoint> contours)
         {
@@ -223,68 +220,54 @@ namespace WFAStaubli
             // Generate commands for smooth and non-smooth contours
             foreach (var points in allPoints)
             {
-                if (IsSmoothContour(new VectorOfPoint(points.ToArray()), Math.PI / 6))
+                bool isSmooth = IsSmoothContour(new VectorOfPoint(points.ToArray()), Math.PI / 6);
+
+                for (int i = 0; i < points.Count; i++)
                 {
-                    // Handle smooth contours
-                    for (int i = 0; i < points.Count; i++)
+                    Point point = points[i];
+                    var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
+
+                    Point robotPoint = new Point((int)robotX, (int)robotY);
+                    double[] orientation = defaultOrientation;
+                    string commandType = "movel";
+
+                    if (isFirstCommand || (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
                     {
-                        Point point = points[i];
-                        var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
-
-                        Point robotPoint = new Point((int)robotX, (int)robotY);
-                        double[] orientation = defaultOrientation;
-                        string commandType = (i == 0) ? "movej" : "movel";
-
-                        double pointZ = (i == 0) ? safeHeight : drawHeight;
-                        commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
-
-                        if (i == 0)
-                        {
-                            commands.Add("waitEndMove()");
-                            commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
-                        }
-
-                        lastX = robotX;
-                        lastY = robotY;
-                        isFirstCommand = false;
-                    }
-                    commands.Add("waitEndMove()");
-                }
-                else
-                {
-                    // Handle non-smooth contours
-                    for (int i = 0; i < points.Count; i++)
-                    {
-                        Point point = points[i];
-                        var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
-
-                        Point robotPoint = new Point((int)robotX, (int)robotY);
-                        double[] orientation = defaultOrientation;
-                        string commandType = (i == 0) ? "movej" : "movel";
-
-                        if (!isFirstCommand && (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
+                        if (!isFirstCommand)
                         {
                             // Lift to safe height
                             commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), orientation, safeHeight));
                             commands.Add("waitEndMove()");
-
-                            // Move to the new position at safe height
-                            commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
-                            commands.Add("waitEndMove()");
-
-                            // Move down to draw height
-                            commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
                         }
 
-                        double pointZ = drawHeight;
-                        commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+                        // Move to the new position at safe height
+                        commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
+                        commands.Add("waitEndMove()");
 
-                        lastX = robotX;
-                        lastY = robotY;
-                        isFirstCommand = false;
+                        // Move down to draw height
+                        commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
+                        commandType = "movel";
                     }
-                    commands.Add("waitEndMove()");
+                    else
+                    {
+                        if (isSmooth)
+                        {
+                            commandType = "movej";
+                        }
+                        else
+                        {
+                            commandType = "movel";
+                        }
+                    }
+
+                    double pointZ = drawHeight;
+                    commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+
+                    lastX = robotX;
+                    lastY = robotY;
+                    isFirstCommand = false;
                 }
+                commands.Add("waitEndMove()");
             }
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
@@ -321,7 +304,6 @@ namespace WFAStaubli
 
             return true;
         }
-
 
         private void btnCommand_Click(object sender, EventArgs e)
         {
@@ -408,7 +390,6 @@ namespace WFAStaubli
             }
         }
 
-
         private void DrawRobotCommands(List<string> commands)
         {
             Bitmap drawingImage = new Bitmap(pcbDrawing.Width, pcbDrawing.Height);
@@ -464,7 +445,6 @@ namespace WFAStaubli
             int y = int.Parse(parts[1].Trim());
             return new Point(x, y);
         }
-
 
     }
 }
