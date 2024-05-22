@@ -50,9 +50,8 @@ namespace WFAStaubli
                     return;
                 }
 
-                var contours = DetectContours(convertedImage);
-
-                List<string> commands = GenerateRobotCommands(contours);
+                var pixelCoordinates = ExtractPixelCoordinates(convertedImage);
+                List<string> commands = GenerateRobotCommandsFromPixels(pixelCoordinates);
 
                 DrawRobotCommands(commands);
             }
@@ -124,44 +123,27 @@ namespace WFAStaubli
             return matImage.ToBitmap();
         }
 
-        private List<VectorOfPoint> DetectContours(Bitmap image)
+        private List<Point> ExtractPixelCoordinates(Bitmap image)
+{
+    List<Point> pixelCoordinates = new List<Point>();
+
+    for (int y = 0; y < image.Height; y++)
+    {
+        for (int x = 0; x < image.Width; x++)
         {
-            // Convert Bitmap to Image<Gray, byte>
-            Image<Gray, byte> imgGray = image.ToImage<Gray, byte>();
-            Mat matImage = imgGray.Mat;
-
-            using (Mat cannyEdges = new Mat())
+            Color pixelColor = image.GetPixel(x, y);
+            if (pixelColor.R == 0) // Assuming black pixel is part of the shape
             {
-                CvInvoke.Canny(matImage, cannyEdges, 100, 200);
-
-                using (VectorOfVectorOfPoint contours = new VectorOfVectorOfPoint())
-                {
-                    CvInvoke.FindContours(cannyEdges, contours, null, RetrType.List, ChainApproxMethod.ChainApproxSimple);
-
-                    List<VectorOfPoint> contourList = new List<VectorOfPoint>();
-
-                    Console.WriteLine($"Contours detected: {contours.Size}");
-
-                    for (int i = 0; i < contours.Size; i++)
-                    {
-                        using (VectorOfPoint contour = contours[i])
-                        {
-                            Console.WriteLine($"Contour {i} size: {contour.Size}");
-                            if (contour.Size > 0)
-                            {
-                                // Clone the contour
-                                VectorOfPoint clonedContour = new VectorOfPoint();
-                                clonedContour.Push(contour.ToArray());
-                                contourList.Add(clonedContour);
-                            }
-                        }
-                    }
-                    return contourList;
-                }
+                pixelCoordinates.Add(new Point(x, y));
             }
         }
+    }
 
-        private List<string> GenerateRobotCommands(List<VectorOfPoint> contours)
+    return pixelCoordinates.OrderBy(p => p.Y).ThenBy(p => p.X).ToList(); // Sort by Y first, then by X to maintain order
+}
+
+
+        private List<string> GenerateRobotCommandsFromPixels(List<Point> pixelCoordinates)
         {
             List<string> commands = new List<string>();
 
@@ -176,99 +158,51 @@ namespace WFAStaubli
             double minX = double.MaxValue;
             double minY = double.MaxValue;
 
-            foreach (var contour in contours)
+            foreach (var point in pixelCoordinates)
             {
-                if (contour == null || contour.Size == 0)
-                {
-                    continue;
-                }
-
-                for (int i = 0; i < contour.Size; i++)
-                {
-                    Point point = contour[i];
-                    if (point.X < minX)
-                        minX = point.X;
-                    if (point.Y < minY)
-                        minY = point.Y;
-                }
-            }
-
-            // Adjust points to ensure the drawing is close to the top left corner
-            List<List<Point>> allPoints = new List<List<Point>>();
-            foreach (var contour in contours)
-            {
-                if (contour == null || contour.Size == 0)
-                {
-                    continue;
-                }
-
-                List<Point> points = new List<Point>();
-                for (int i = 0; i < contour.Size; i++)
-                {
-                    Point point = contour[i];
-                    points.Add(new Point(point.X - (int)minX, point.Y - (int)minY));
-                }
-
-                if (points.Count > 0)
-                {
-                    allPoints.Add(points);
-                }
+                if (point.X < minX)
+                    minX = point.X;
+                if (point.Y < minY)
+                    minY = point.Y;
             }
 
             commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
 
-            // Generate commands for smooth and non-smooth contours
-            foreach (var points in allPoints)
+            foreach (var point in pixelCoordinates)
             {
-                bool isSmooth = IsSmoothContour(new VectorOfPoint(points.ToArray()), Math.PI / 6);
+                var (robotX, robotY) = DefinePoint(point.X - minX, point.Y - minY, scaleFactor, marginX, marginY);
 
-                for (int i = 0; i < points.Count; i++)
+                Point robotPoint = new Point((int)robotX, (int)robotY);
+                double[] orientation = defaultOrientation;
+
+                if (isFirstCommand || (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
                 {
-                    Point point = points[i];
-                    var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
-
-                    Point robotPoint = new Point((int)robotX, (int)robotY);
-                    double[] orientation = defaultOrientation;
-                    string commandType = "movel";
-
-                    if (isFirstCommand || (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
+                    if (!isFirstCommand)
                     {
-                        if (!isFirstCommand)
-                        {
-                            // Lift to safe height
-                            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), orientation, safeHeight));
-                            commands.Add("waitEndMove()");
-                        }
-
-                        // Move to the new position at safe height
-                        commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
+                        // Lift to safe height
+                        commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), orientation, safeHeight));
                         commands.Add("waitEndMove()");
-
-                        // Move down to draw height
-                        commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
-                        commandType = "movel";
-                    }
-                    else
-                    {
-                        if (isSmooth)
-                        {
-                            commandType = "movej";
-                        }
-                        else
-                        {
-                            commandType = "movel";
-                        }
                     }
 
-                    double pointZ = drawHeight;
-                    commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+                    // Move to the new position at safe height
+                    commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
+                    commands.Add("waitEndMove()");
 
-                    lastX = robotX;
-                    lastY = robotY;
-                    isFirstCommand = false;
+                    // Move down to draw height
+                    commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
                 }
-                commands.Add("waitEndMove()");
+
+                // Draw the current point
+                commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
+
+                lastX = robotX;
+                lastY = robotY;
+                isFirstCommand = false;
             }
+
+            // Lift to safe height at the end
+            commands.Add("waitEndMove()");
+            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), defaultOrientation, safeHeight));
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
@@ -286,25 +220,6 @@ namespace WFAStaubli
             return (robotX, robotY);
         }
 
-        private bool IsSmoothContour(VectorOfPoint contour, double maxAngleChange)
-        {
-            if (contour.Size < 3)
-                return true;
-
-            for (int i = 1; i < contour.Size - 1; i++)
-            {
-                Point pt1 = contour[i - 1];
-                Point pt2 = contour[i];
-                Point pt3 = contour[i + 1];
-
-                double angle = Math.Abs(Math.Atan2(pt3.Y - pt2.Y, pt3.X - pt2.X) - Math.Atan2(pt2.Y - pt1.Y, pt2.X - pt1.X));
-                if (angle > maxAngleChange)
-                    return false;
-            }
-
-            return true;
-        }
-
         private void btnCommand_Click(object sender, EventArgs e)
         {
             try
@@ -319,7 +234,7 @@ namespace WFAStaubli
                         return;
                     }
 
-                    var contours = DetectContours(convertedImage);
+                    var pixelCoordinates = ExtractPixelCoordinates(convertedImage);
 
                     SaveFileDialog saveFileDialog = new SaveFileDialog
                     {
@@ -329,7 +244,7 @@ namespace WFAStaubli
 
                     if (saveFileDialog.ShowDialog() == DialogResult.OK)
                     {
-                        List<string> commands = GenerateRobotCommands(contours);
+                        List<string> commands = GenerateRobotCommandsFromPixels(pixelCoordinates);
                         if (saveFileDialog.FileName.EndsWith(".txt"))
                         {
                             SaveCommandsAsText(saveFileDialog.FileName, commands);
@@ -445,6 +360,5 @@ namespace WFAStaubli
             int y = int.Parse(parts[1].Trim());
             return new Point(x, y);
         }
-
     }
 }
