@@ -78,7 +78,37 @@ namespace WFAStaubli
         private Bitmap ConvertToBlackAndWhite(Bitmap originalImage)
         {
             // Convert Bitmap to Image<Bgr, byte>
-            Image<Bgr, byte> imgBgr = originalImage.ToImage<Bgr, byte>();
+            Image<Bgr, byte> imgBgr;
+
+            if (originalImage.PixelFormat == System.Drawing.Imaging.PixelFormat.Format32bppArgb)
+            {
+                // Handle transparency by converting transparent pixels to white
+                imgBgr = new Image<Bgr, byte>(originalImage.Width, originalImage.Height);
+
+                for (int y = 0; y < originalImage.Height; y++)
+                {
+                    for (int x = 0; x < originalImage.Width; x++)
+                    {
+                        Color pixelColor = originalImage.GetPixel(x, y);
+                        if (pixelColor.A < 255)
+                        {
+                            imgBgr.Data[y, x, 0] = 255; // Blue
+                            imgBgr.Data[y, x, 1] = 255; // Green
+                            imgBgr.Data[y, x, 2] = 255; // Red
+                        }
+                        else
+                        {
+                            imgBgr.Data[y, x, 0] = pixelColor.B;
+                            imgBgr.Data[y, x, 1] = pixelColor.G;
+                            imgBgr.Data[y, x, 2] = pixelColor.R;
+                        }
+                    }
+                }
+            }
+            else
+            {
+                imgBgr = originalImage.ToImage<Bgr, byte>();
+            }
 
             // Convert to grayscale
             Mat matImage = new Mat();
@@ -141,56 +171,24 @@ namespace WFAStaubli
             double safeHeight = 0;
             double drawHeight = 20;
             bool isFirstCommand = true;
-            bool inDrawing = false;
-            double lastZ = safeHeight;
+            double lastX = 0, lastY = 0;
 
             double[] defaultOrientation = new double[3];
 
-            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
-
-            // Extract points from contours into a list of lists of points
-            List<List<Point>> allPoints = new List<List<Point>>();
-            Console.WriteLine($"Total contours: {contours.Count}");
+            // Determine the minimum X and Y values
+            double minX = double.MaxValue;
+            double minY = double.MaxValue;
 
             foreach (var contour in contours)
             {
                 if (contour == null || contour.Size == 0)
                 {
-                    Console.WriteLine("Empty or null contour skipped.");
                     continue;
                 }
 
-                List<Point> points = new List<Point>();
                 for (int i = 0; i < contour.Size; i++)
                 {
-                    try
-                    {
-                        Point point = contour[i];
-                        points.Add(point);
-                        Console.WriteLine($"Added point: {point}");
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"Error accessing point at index {i} of contour: {ex.Message}");
-                        continue;
-                    }
-                }
-
-                if (points.Count > 0)
-                {
-                    allPoints.Add(points);
-                    Console.WriteLine($"Points in contour: {points.Count}");
-                }
-            }
-
-            // Find the minimum X and Y values to adjust the origin to the top left
-            double minX = double.MaxValue;
-            double minY = double.MaxValue;
-
-            foreach (var points in allPoints)
-            {
-                foreach (var point in points)
-                {
+                    Point point = contour[i];
                     if (point.X < minX)
                         minX = point.X;
                     if (point.Y < minY)
@@ -198,45 +196,94 @@ namespace WFAStaubli
                 }
             }
 
-            // Adjust the points to ensure the drawing is close to the top left corner
+            // Adjust points to ensure the drawing is close to the top left corner
+            List<List<Point>> allPoints = new List<List<Point>>();
+            foreach (var contour in contours)
+            {
+                if (contour == null || contour.Size == 0)
+                {
+                    continue;
+                }
+
+                List<Point> points = new List<Point>();
+                for (int i = 0; i < contour.Size; i++)
+                {
+                    Point point = contour[i];
+                    points.Add(new Point(point.X - (int)minX, point.Y - (int)minY));
+                }
+
+                if (points.Count > 0)
+                {
+                    allPoints.Add(points);
+                }
+            }
+
+            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
+
+            // Generate commands for smooth and non-smooth contours
             foreach (var points in allPoints)
             {
-                for (int i = 0; i < points.Count; i++)
+                if (IsSmoothContour(new VectorOfPoint(points.ToArray()), Math.PI / 6))
                 {
-                    Point point = points[i];
-                    var (robotX, robotY) = DefinePoint(point.X - minX, point.Y - minY, scaleFactor, marginX, marginY);
-
-                    Console.WriteLine($"Processing point {i} of contour: ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
-
-                    Point robotPoint = new Point((int)robotX, (int)robotY);
-                    double[] orientation = defaultOrientation;
-                    string commandType = (i == 0) ? "movej" : "movel";
-
-                    if (!isFirstCommand && lastZ == safeHeight && !inDrawing)
+                    // Handle smooth contours
+                    for (int i = 0; i < points.Count; i++)
                     {
-                        commands.Add("waitEndMove()");
-                    }
+                        Point point = points[i];
+                        var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
 
-                    double pointZ = (i == 0 && isFirstCommand) ? safeHeight : drawHeight;
-                    commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
-                    if (pointZ == safeHeight)
+                        Point robotPoint = new Point((int)robotX, (int)robotY);
+                        double[] orientation = defaultOrientation;
+                        string commandType = (i == 0) ? "movej" : "movel";
+
+                        double pointZ = (i == 0) ? safeHeight : drawHeight;
+                        commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+
+                        if (i == 0)
+                        {
+                            commands.Add("waitEndMove()");
+                            commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
+                        }
+
+                        lastX = robotX;
+                        lastY = robotY;
+                        isFirstCommand = false;
+                    }
+                    commands.Add("waitEndMove()");
+                }
+                else
+                {
+                    // Handle non-smooth contours
+                    for (int i = 0; i < points.Count; i++)
                     {
-                        commands.Add("waitEndMove()");
-                        inDrawing = false;
-                    }
-                    else if (commandType == "movel")
-                    {
-                        inDrawing = true;
-                    }
+                        Point point = points[i];
+                        var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
 
-                    isFirstCommand = false;
+                        Point robotPoint = new Point((int)robotX, (int)robotY);
+                        double[] orientation = defaultOrientation;
+                        string commandType = (i == 0) ? "movej" : "movel";
 
-                    if (i == points.Count - 1)
-                    {
-                        commands.Add("waitEndMove()");
+                        if (!isFirstCommand && (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
+                        {
+                            // Lift to safe height
+                            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), orientation, safeHeight));
+                            commands.Add("waitEndMove()");
+
+                            // Move to the new position at safe height
+                            commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
+                            commands.Add("waitEndMove()");
+
+                            // Move down to draw height
+                            commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
+                        }
+
+                        double pointZ = drawHeight;
+                        commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+
+                        lastX = robotX;
+                        lastY = robotY;
+                        isFirstCommand = false;
                     }
-
-                    lastZ = pointZ;
+                    commands.Add("waitEndMove()");
                 }
             }
 
@@ -255,6 +302,26 @@ namespace WFAStaubli
             double robotY = imageY * scaleFactor + marginY;
             return (robotX, robotY);
         }
+
+        private bool IsSmoothContour(VectorOfPoint contour, double maxAngleChange)
+        {
+            if (contour.Size < 3)
+                return true;
+
+            for (int i = 1; i < contour.Size - 1; i++)
+            {
+                Point pt1 = contour[i - 1];
+                Point pt2 = contour[i];
+                Point pt3 = contour[i + 1];
+
+                double angle = Math.Abs(Math.Atan2(pt3.Y - pt2.Y, pt3.X - pt2.X) - Math.Atan2(pt2.Y - pt1.Y, pt2.X - pt1.X));
+                if (angle > maxAngleChange)
+                    return false;
+            }
+
+            return true;
+        }
+
 
         private void btnCommand_Click(object sender, EventArgs e)
         {
@@ -397,5 +464,7 @@ namespace WFAStaubli
             int y = int.Parse(parts[1].Trim());
             return new Point(x, y);
         }
+
+
     }
 }
