@@ -164,6 +164,7 @@ namespace WFAStaubli
         private List<string> GenerateRobotCommands(List<VectorOfPoint> contours)
         {
             List<string> commands = new List<string>();
+            HashSet<(int, int)> visitedPoints = new HashSet<(int, int)>();
 
             double safeHeight = 0;
             double drawHeight = 20;
@@ -217,19 +218,23 @@ namespace WFAStaubli
 
             commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
 
-            // Generate commands for smooth and non-smooth contours
             foreach (var points in allPoints)
             {
-                bool isSmooth = IsSmoothContour(new VectorOfPoint(points.ToArray()), Math.PI / 6);
-
                 for (int i = 0; i < points.Count; i++)
                 {
                     Point point = points[i];
                     var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
+                    (int, int) pointTuple = ((int)robotX, (int)robotY);
+
+                    if (visitedPoints.Contains(pointTuple))
+                    {
+                        continue;
+                    }
+
+                    visitedPoints.Add(pointTuple);
 
                     Point robotPoint = new Point((int)robotX, (int)robotY);
                     double[] orientation = defaultOrientation;
-                    string commandType = "movel";
 
                     if (isFirstCommand || (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
                     {
@@ -246,29 +251,22 @@ namespace WFAStaubli
 
                         // Move down to draw height
                         commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
-                        commandType = "movel";
-                    }
-                    else
-                    {
-                        if (isSmooth)
-                        {
-                            commandType = "movej";
-                        }
-                        else
-                        {
-                            commandType = "movel";
-                        }
                     }
 
-                    double pointZ = drawHeight;
-                    commands.Add(FormatCommand(commandType, robotPoint, orientation, pointZ));
+                    // Draw the current point
+                    commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
 
                     lastX = robotX;
                     lastY = robotY;
                     isFirstCommand = false;
+
+                    Console.WriteLine($"Generated command for point ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
                 }
                 commands.Add("waitEndMove()");
             }
+
+            // Lift to safe height at the end of all contours
+            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), defaultOrientation, safeHeight));
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
