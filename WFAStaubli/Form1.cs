@@ -168,13 +168,13 @@ namespace WFAStaubli
             double safeHeight = 0;
             double drawHeight = 20;
             bool isFirstCommand = true;
-            bool inDrawing = false;
             double lastZ = safeHeight;
 
             double[] defaultOrientation = new double[3];
 
             commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
 
+            // Extract points from contours into a list of lists of points
             List<List<Point>> allPoints = new List<List<Point>>();
             Console.WriteLine($"Total contours: {contours.Count}");
 
@@ -209,6 +209,7 @@ namespace WFAStaubli
                 }
             }
 
+            // Find the minimum X and Y values to adjust the origin to the top left
             double minX = double.MaxValue;
             double minY = double.MaxValue;
 
@@ -223,8 +224,9 @@ namespace WFAStaubli
                 }
             }
 
+            // Adjust the points to ensure the drawing is close to the top left corner
             Point lastPoint = new Point(0, 0);
-
+            double lastZValue = safeHeight;
             foreach (var points in allPoints)
             {
                 for (int i = 0; i < points.Count; i++)
@@ -238,39 +240,23 @@ namespace WFAStaubli
                     double[] orientation = defaultOrientation;
                     string commandType = (i == 0) ? "movej" : "movel";
 
-                    double distance = Math.Sqrt(Math.Pow(robotPoint.X - lastPoint.X, 2) + Math.Pow(robotPoint.Y - lastPoint.Y, 2));
+                    double distanceX = Math.Abs(robotPoint.X - lastPoint.X);
+                    double distanceY = Math.Abs(robotPoint.Y - lastPoint.Y);
 
-                    if (distance >= 20)
+                    double currentZValue = (distanceX >= 8 || distanceY >= 8) ? 0 : drawHeight;
+
+                    if (lastZValue != currentZValue || commands.Count == 0 || commands.Last() != FormatCommand(commandType, robotPoint, orientation, currentZValue))
                     {
-                        commands.Add(FormatCommand("movej", lastPoint, orientation, 0));
-                        commands.Add("waitEndMove()");
-                        commands.Add(FormatCommand("movej", robotPoint, orientation, 0));
-                        commands.Add("waitEndMove()");
-                        commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
-                    }
-                    else
-                    {
-                        commands.Add(FormatCommand(commandType, robotPoint, orientation, drawHeight));
+                        AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, currentZValue));
                     }
 
-                    if (!isFirstCommand && lastZ == safeHeight && !inDrawing)
+                    if (distanceX >= 8 || distanceY >= 8)
                     {
                         commands.Add("waitEndMove()");
+                        AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, drawHeight));
                     }
 
-                    if (commandType == "movel")
-                    {
-                        inDrawing = true;
-                    }
-
-                    isFirstCommand = false;
-
-                    if (i == points.Count - 1)
-                    {
-                        commands.Add("waitEndMove()");
-                    }
-
-                    lastZ = drawHeight;
+                    lastZValue = currentZValue;
                     lastPoint = robotPoint;
                 }
             }
@@ -280,6 +266,14 @@ namespace WFAStaubli
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
+        }
+
+        private void AddUniqueCommand(List<string> commands, string command)
+        {
+            if (commands.Count == 0 || commands[commands.Count - 1] != command)
+            {
+                commands.Add(command);
+            }
         }
 
         private string FormatCommand(string commandType, Point point, double[] orientation, double zValue)
