@@ -164,29 +164,58 @@ namespace WFAStaubli
         private List<string> GenerateRobotCommands(List<VectorOfPoint> contours)
         {
             List<string> commands = new List<string>();
-            HashSet<(int, int)> visitedPoints = new HashSet<(int, int)>();
 
             double safeHeight = 0;
             double drawHeight = 20;
             bool isFirstCommand = true;
-            double lastX = 0, lastY = 0;
+            bool inDrawing = false;
+            double lastZ = safeHeight;
 
             double[] defaultOrientation = new double[3];
 
-            // Determine the minimum X and Y values
-            double minX = double.MaxValue;
-            double minY = double.MaxValue;
+            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
+
+            List<List<Point>> allPoints = new List<List<Point>>();
+            Console.WriteLine($"Total contours: {contours.Count}");
 
             foreach (var contour in contours)
             {
                 if (contour == null || contour.Size == 0)
                 {
+                    Console.WriteLine("Empty or null contour skipped.");
                     continue;
                 }
 
+                List<Point> points = new List<Point>();
                 for (int i = 0; i < contour.Size; i++)
                 {
-                    Point point = contour[i];
+                    try
+                    {
+                        Point point = contour[i];
+                        points.Add(point);
+                        Console.WriteLine($"Added point: {point}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine($"Error accessing point at index {i} of contour: {ex.Message}");
+                        continue;
+                    }
+                }
+
+                if (points.Count > 0)
+                {
+                    allPoints.Add(points);
+                    Console.WriteLine($"Points in contour: {points.Count}");
+                }
+            }
+
+            double minX = double.MaxValue;
+            double minY = double.MaxValue;
+
+            foreach (var points in allPoints)
+            {
+                foreach (var point in points)
+                {
                     if (point.X < minX)
                         minX = point.X;
                     if (point.Y < minY)
@@ -194,79 +223,60 @@ namespace WFAStaubli
                 }
             }
 
-            // Adjust points to ensure the drawing is close to the top left corner
-            List<List<Point>> allPoints = new List<List<Point>>();
-            foreach (var contour in contours)
-            {
-                if (contour == null || contour.Size == 0)
-                {
-                    continue;
-                }
-
-                List<Point> points = new List<Point>();
-                for (int i = 0; i < contour.Size; i++)
-                {
-                    Point point = contour[i];
-                    points.Add(new Point(point.X - (int)minX, point.Y - (int)minY));
-                }
-
-                if (points.Count > 0)
-                {
-                    allPoints.Add(points);
-                }
-            }
-
-            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
+            Point lastPoint = new Point(0, 0);
 
             foreach (var points in allPoints)
             {
                 for (int i = 0; i < points.Count; i++)
                 {
                     Point point = points[i];
-                    var (robotX, robotY) = DefinePoint(point.X, point.Y, scaleFactor, marginX, marginY);
-                    (int, int) pointTuple = ((int)robotX, (int)robotY);
+                    var (robotX, robotY) = DefinePoint(point.X - minX, point.Y - minY, scaleFactor, marginX, marginY);
 
-                    if (visitedPoints.Contains(pointTuple))
-                    {
-                        continue;
-                    }
-
-                    visitedPoints.Add(pointTuple);
+                    Console.WriteLine($"Processing point {i} of contour: ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
 
                     Point robotPoint = new Point((int)robotX, (int)robotY);
                     double[] orientation = defaultOrientation;
+                    string commandType = (i == 0) ? "movej" : "movel";
 
-                    if (isFirstCommand || (Math.Abs(robotX - lastX) > 20 || Math.Abs(robotY - lastY) > 20))
+                    double distance = Math.Sqrt(Math.Pow(robotPoint.X - lastPoint.X, 2) + Math.Pow(robotPoint.Y - lastPoint.Y, 2));
+
+                    if (distance >= 20)
                     {
-                        if (!isFirstCommand)
-                        {
-                            // Lift to safe height
-                            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), orientation, safeHeight));
-                            commands.Add("waitEndMove()");
-                        }
-
-                        // Move to the new position at safe height
-                        commands.Add(FormatCommand("movej", robotPoint, orientation, safeHeight));
+                        commands.Add(FormatCommand("movej", lastPoint, orientation, 0));
                         commands.Add("waitEndMove()");
-
-                        // Move down to draw height
+                        commands.Add(FormatCommand("movej", robotPoint, orientation, 0));
+                        commands.Add("waitEndMove()");
                         commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
                     }
+                    else
+                    {
+                        commands.Add(FormatCommand(commandType, robotPoint, orientation, drawHeight));
+                    }
 
-                    // Draw the current point
-                    commands.Add(FormatCommand("movel", robotPoint, orientation, drawHeight));
+                    if (!isFirstCommand && lastZ == safeHeight && !inDrawing)
+                    {
+                        commands.Add("waitEndMove()");
+                    }
 
-                    lastX = robotX;
-                    lastY = robotY;
+                    if (commandType == "movel")
+                    {
+                        inDrawing = true;
+                    }
+
                     isFirstCommand = false;
 
-                    Console.WriteLine($"Generated command for point ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
+                    if (i == points.Count - 1)
+                    {
+                        commands.Add("waitEndMove()");
+                    }
+
+                    lastZ = drawHeight;
+                    lastPoint = robotPoint;
                 }
-                commands.Add("waitEndMove()");
             }
 
-            // Lift to safe height at the end of all contours
-            commands.Add(FormatCommand("movel", new Point((int)lastX, (int)lastY), defaultOrientation, safeHeight));
+            commands.Add(FormatCommand("movej", new Point(0, 0), defaultOrientation, safeHeight));
+            commands.Add("waitEndMove()");
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
@@ -282,25 +292,6 @@ namespace WFAStaubli
             double robotX = imageX * scaleFactor + marginX;
             double robotY = imageY * scaleFactor + marginY;
             return (robotX, robotY);
-        }
-
-        private bool IsSmoothContour(VectorOfPoint contour, double maxAngleChange)
-        {
-            if (contour.Size < 3)
-                return true;
-
-            for (int i = 1; i < contour.Size - 1; i++)
-            {
-                Point pt1 = contour[i - 1];
-                Point pt2 = contour[i];
-                Point pt3 = contour[i + 1];
-
-                double angle = Math.Abs(Math.Atan2(pt3.Y - pt2.Y, pt3.X - pt2.X) - Math.Atan2(pt2.Y - pt1.Y, pt2.X - pt1.X));
-                if (angle > maxAngleChange)
-                    return false;
-            }
-
-            return true;
         }
 
         private void btnCommand_Click(object sender, EventArgs e)
@@ -443,6 +434,5 @@ namespace WFAStaubli
             int y = int.Parse(parts[1].Trim());
             return new Point(x, y);
         }
-
     }
 }
