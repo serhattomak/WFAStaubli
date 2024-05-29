@@ -167,8 +167,7 @@ namespace WFAStaubli
 
             double safeHeight = 0;
             double drawHeight = 20;
-            bool isFirstCommand = true;
-            double lastZ = safeHeight;
+            double lastZValue = safeHeight;
 
             double[] defaultOrientation = new double[3];
 
@@ -225,39 +224,49 @@ namespace WFAStaubli
             }
 
             // Adjust the points to ensure the drawing is close to the top left corner
-            Point lastPoint = new Point(0, 0);
-            double lastZValue = safeHeight;
             foreach (var points in allPoints)
             {
-                for (int i = 0; i < points.Count; i++)
+                int i = 0;
+                while (i < points.Count)
                 {
-                    Point point = points[i];
-                    var (robotX, robotY) = DefinePoint(point.X - minX, point.Y - minY, scaleFactor, marginX, marginY);
+                    Point startPoint = points[i];
+                    var (startX, startY) = DefinePoint(startPoint.X - minX, startPoint.Y - minY, scaleFactor, marginX, marginY);
+                    Point robotStartPoint = new Point((int)startX, (int)startY);
 
-                    Console.WriteLine($"Processing point {i} of contour: ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
-
-                    Point robotPoint = new Point((int)robotX, (int)robotY);
-                    double[] orientation = defaultOrientation;
-                    string commandType = (i == 0) ? "movej" : "movel";
-
-                    double distanceX = Math.Abs(robotPoint.X - lastPoint.X);
-                    double distanceY = Math.Abs(robotPoint.Y - lastPoint.Y);
-
-                    double currentZValue = (distanceX >= 8 || distanceY >= 8) ? 0 : drawHeight;
-
-                    if (lastZValue != currentZValue || commands.Count == 0 || commands.Last() != FormatCommand(commandType, robotPoint, orientation, currentZValue))
+                    int j = i + 1;
+                    while (j < points.Count)
                     {
-                        AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, currentZValue));
+                        Point nextPoint = points[j];
+                        var (nextX, nextY) = DefinePoint(nextPoint.X - minX, nextPoint.Y - minY, scaleFactor, marginX, marginY);
+
+                        // Check if the points are in a straight line (horizontal, vertical, diagonal)
+                        if (!IsStraightLine(points, i, j))
+                        {
+                            break;
+                        }
+
+                        j++;
                     }
 
-                    if (distanceX >= 8 || distanceY >= 8)
+                    Point robotEndPoint = new Point((int)(DefinePoint(points[j - 1].X - minX, points[j - 1].Y - minY, scaleFactor, marginX, marginY).Item1),
+                                                     (int)(DefinePoint(points[j - 1].X - minX, points[j - 1].Y - minY, scaleFactor, marginX, marginY).Item2));
+
+                    if (i == 0)
+                    {
+                        commands.Add(FormatCommand("movej", robotStartPoint, defaultOrientation, safeHeight));
+                        commands.Add("waitEndMove()");
+                        commands.Add(FormatCommand("movej", robotStartPoint, defaultOrientation, drawHeight));
+                    }
+
+                    commands.Add(FormatCommand("movel", robotEndPoint, defaultOrientation, drawHeight));
+
+                    if (lastZValue == safeHeight)
                     {
                         commands.Add("waitEndMove()");
-                        AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, drawHeight));
                     }
 
-                    lastZValue = currentZValue;
-                    lastPoint = robotPoint;
+                    i = j;
+                    lastZValue = drawHeight;
                 }
             }
 
@@ -266,6 +275,31 @@ namespace WFAStaubli
 
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
+        }
+
+        private bool IsStraightLine(List<Point> points, int startIdx, int endIdx)
+        {
+            // Check if the points between startIdx and endIdx form a straight line
+            if (endIdx <= startIdx + 1)
+            {
+                return true;
+            }
+
+            double dx = points[endIdx].X - points[startIdx].X;
+            double dy = points[endIdx].Y - points[startIdx].Y;
+
+            for (int i = startIdx + 1; i < endIdx; i++)
+            {
+                double currDx = points[i].X - points[startIdx].X;
+                double currDy = points[i].Y - points[startIdx].Y;
+
+                if (currDx * dy != currDy * dx)
+                {
+                    return false;
+                }
+            }
+
+            return true;
         }
 
         private void AddUniqueCommand(List<string> commands, string command)
