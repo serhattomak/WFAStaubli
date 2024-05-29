@@ -167,7 +167,6 @@ namespace WFAStaubli
 
             double safeHeight = 0;
             double drawHeight = 20;
-            double lastZValue = safeHeight;
 
             double[] defaultOrientation = new double[3];
 
@@ -203,8 +202,9 @@ namespace WFAStaubli
 
                 if (points.Count > 0)
                 {
+                    points = SimplifyContour(points, 2.0); // Simplify contour with tolerance
                     allPoints.Add(points);
-                    Console.WriteLine($"Points in contour: {points.Count}");
+                    Console.WriteLine($"Points in contour after simplification: {points.Count}");
                 }
             }
 
@@ -224,49 +224,46 @@ namespace WFAStaubli
             }
 
             // Adjust the points to ensure the drawing is close to the top left corner
+            Point lastPoint = new Point(0, 0);
+            double lastZValue = safeHeight;
             foreach (var points in allPoints)
             {
-                int i = 0;
-                while (i < points.Count)
+                for (int i = 0; i < points.Count; i++)
                 {
-                    Point startPoint = points[i];
-                    var (startX, startY) = DefinePoint(startPoint.X - minX, startPoint.Y - minY, scaleFactor, marginX, marginY);
-                    Point robotStartPoint = new Point((int)startX, (int)startY);
+                    Point point = points[i];
+                    var (robotX, robotY) = DefinePoint(point.X - minX, point.Y - minY, scaleFactor, marginX, marginY);
 
-                    int j = i + 1;
-                    while (j < points.Count)
+                    Console.WriteLine($"Processing point {i} of contour: ({point.X}, {point.Y}) -> ({robotX}, {robotY})");
+
+                    Point robotPoint = new Point((int)robotX, (int)robotY);
+                    double[] orientation = defaultOrientation;
+                    string commandType = (i == 0) ? "movej" : "movel";
+
+                    double distanceX = Math.Abs(robotPoint.X - lastPoint.X);
+                    double distanceY = Math.Abs(robotPoint.Y - lastPoint.Y);
+
+                    double currentZValue = (distanceX >= 8 || distanceY >= 8) ? 0 : drawHeight;
+
+                    if (lastZValue != currentZValue)
                     {
-                        Point nextPoint = points[j];
-                        var (nextX, nextY) = DefinePoint(nextPoint.X - minX, nextPoint.Y - minY, scaleFactor, marginX, marginY);
-
-                        // Check if the points are in a straight line (horizontal, vertical, diagonal)
-                        if (!IsStraightLine(points, i, j))
+                        if (currentZValue == 0)
                         {
-                            break;
+                            AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, currentZValue));
+                            commands.Add("waitEndMove()");
                         }
-
-                        j++;
+                        else if (lastZValue == 0)
+                        {
+                            commands.Add("waitEndMove()");
+                            AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, currentZValue));
+                        }
                     }
-
-                    Point robotEndPoint = new Point((int)(DefinePoint(points[j - 1].X - minX, points[j - 1].Y - minY, scaleFactor, marginX, marginY).Item1),
-                                                     (int)(DefinePoint(points[j - 1].X - minX, points[j - 1].Y - minY, scaleFactor, marginX, marginY).Item2));
-
-                    if (i == 0)
+                    else
                     {
-                        commands.Add(FormatCommand("movej", robotStartPoint, defaultOrientation, safeHeight));
-                        commands.Add("waitEndMove()");
-                        commands.Add(FormatCommand("movej", robotStartPoint, defaultOrientation, drawHeight));
+                        AddUniqueCommand(commands, FormatCommand(commandType, robotPoint, orientation, currentZValue));
                     }
 
-                    commands.Add(FormatCommand("movel", robotEndPoint, defaultOrientation, drawHeight));
-
-                    if (lastZValue == safeHeight)
-                    {
-                        commands.Add("waitEndMove()");
-                    }
-
-                    i = j;
-                    lastZValue = drawHeight;
+                    lastZValue = currentZValue;
+                    lastPoint = robotPoint;
                 }
             }
 
@@ -276,6 +273,72 @@ namespace WFAStaubli
             Console.WriteLine($"Total commands generated: {commands.Count}");
             return commands;
         }
+
+        private List<Point> SimplifyContour(List<Point> points, double tolerance)
+        {
+            if (points == null || points.Count < 3)
+                return points;
+
+            int firstPoint = 0;
+            int lastPoint = points.Count - 1;
+            List<int> pointIndexsToKeep = new List<int>();
+
+            // Add the first and last index to the keepers
+            pointIndexsToKeep.Add(firstPoint);
+            pointIndexsToKeep.Add(lastPoint);
+
+            // The first and the last point cannot be the same
+            while (points[firstPoint].Equals(points[lastPoint]))
+            {
+                lastPoint--;
+                pointIndexsToKeep.Add(lastPoint);
+            }
+
+            SimplifyContour(points, firstPoint, lastPoint, tolerance, ref pointIndexsToKeep);
+
+            List<Point> returnPoints = new List<Point>();
+            pointIndexsToKeep.Sort();
+            foreach (int index in pointIndexsToKeep)
+            {
+                returnPoints.Add(points[index]);
+            }
+
+            return returnPoints;
+        }
+
+        private void SimplifyContour(List<Point> points, int firstPoint, int lastPoint, double tolerance, ref List<int> pointIndexsToKeep)
+        {
+            double maxDistance = 0;
+            int indexFarthest = 0;
+
+            for (int i = firstPoint; i < lastPoint; i++)
+            {
+                double distance = PerpendicularDistance(points[firstPoint], points[lastPoint], points[i]);
+                if (distance > maxDistance)
+                {
+                    maxDistance = distance;
+                    indexFarthest = i;
+                }
+            }
+
+            if (maxDistance > tolerance && indexFarthest != 0)
+            {
+                pointIndexsToKeep.Add(indexFarthest);
+
+                SimplifyContour(points, firstPoint, indexFarthest, tolerance, ref pointIndexsToKeep);
+                SimplifyContour(points, indexFarthest, lastPoint, tolerance, ref pointIndexsToKeep);
+            }
+        }
+
+        private double PerpendicularDistance(Point point1, Point point2, Point point)
+        {
+            double area = Math.Abs(.5 * (point1.X * point2.Y + point2.X * point.Y + point.X * point1.Y - point2.X * point1.Y - point.X * point2.Y - point1.X * point.Y));
+            double bottom = Math.Sqrt(Math.Pow(point1.X - point2.X, 2) + Math.Pow(point1.Y - point2.Y, 2));
+            double height = area / bottom * 2;
+
+            return height;
+        }
+
 
         private bool IsStraightLine(List<Point> points, int startIdx, int endIdx)
         {
@@ -301,6 +364,7 @@ namespace WFAStaubli
 
             return true;
         }
+
 
         private void AddUniqueCommand(List<string> commands, string command)
         {
